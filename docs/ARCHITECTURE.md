@@ -17,10 +17,13 @@ hackathon). The business goal is to move dispatchers from reactive to
 proactive management — e.g. adjusting vehicle counts on a route, or stop
 dwell time, before a delay compounds.
 
-This repository is the **offline ML side**: turning organizer-provided CSV
-data into a validated target, a leakage-safe evaluation setup, and (once
-Valeria's part exists) a trained model artifact. It does not implement
-runtime/serving behavior.
+This repository holds the **offline ML side** (fz): turning organizer-provided
+CSV data into a validated target, a leakage-safe evaluation setup, and (once
+a real model exists) a trained model artifact. Since this checkpoint it also
+holds a **provisional serving shell** (Valeria): a FastAPI service with a
+deterministic mock predictor, built ahead of any real model so backend
+integration isn't blocked on one. See `docs/ML_SERVING_CONTRACT.md` for the
+serving contract.
 
 ## 2. Confirmed organizer facts
 
@@ -142,20 +145,50 @@ be understood, canonicalized, split, and scored correctly and reproducibly.
 
 ## 7. Future Valeria integration
 
-Reserved, currently-empty packages: `features/`, `models/`, `artifacts/`,
-`serving/`. They exist so Valeria can add real content without reorganizing
-the repository, not as stub classes to fill in.
+Reserved packages: `features/`, `models/`, `artifacts/`, `serving/`. They
+exist so Valeria can add real content without reorganizing the repository.
 
-Valeria owns:
+**Current implementation** (provisional, pre-task-release foundation):
 
-- the shared Feature Builder (`features/`)
+- `serving/` — a FastAPI service shell: `GET /health`, `GET /ready`,
+  `POST /api/v1/predict/batch`. No model/feature logic in the endpoint
+  layer — see the `Predictor` boundary in `serving/service.py`. That
+  boundary is runtime-checked, not just a `typing.Protocol` type hint: a
+  predictor must not mutate the request it's handed, `is_ready()` must
+  return exactly `bool`, and a ready predictor's `model_version()` must be a
+  non-empty `str` — violations become a safe `503`/`500`, never an
+  uncontrolled crash or a silently-wrong response.
+- `serving/mock.py` — `MockPredictor`: deterministic, always ready, fixed
+  `model_version="mock-v0"`, `predicted_delay=0.0` for every vehicle. Used
+  for backend/frontend integration ahead of a real model, and meant to stay
+  useful afterward (e.g. for local dev), not to be thrown away. It must be
+  wired in explicitly (`serving/mock_app.py`) — `serving/app.py::create_app`
+  never defaults to it on its own.
+- `artifacts/metadata.py` — `ArtifactMetadata`: a minimal, stable metadata
+  shape (`model_version`, `created_at`, `model_type`, `target_name`, and
+  optional `target_unit`/`target_version`/`feature_schema_version`/
+  `validation_mae`). Not an artifact loader — the real model file format is
+  still unknown.
+- `features/` and `models/` remain empty — no feature or training logic
+  exists yet.
+
+Full request/response contract: see `docs/ML_SERVING_CONTRACT.md`.
+**The provisional `context` field on each vehicle is intentionally opaque
+(an untyped JSON object) and MUST be replaced/tightened once the official
+CSV ↔ emulator field mapping is released** — nothing in `MockPredictor` or
+the serving layer reads transport-specific keys out of it.
+
+**Planned after full task release** (not yet built):
+
+- the shared Feature Builder (`features/`), imported by both offline
+  training and online serving
 - preprocessing/model pipeline (`models/`)
-- ML Artifact Bundle implementation (`artifacts/`)
-- Python FastAPI inference service (`serving/`)
+- a real Artifact Bundle implementation (`artifacts/`) — an actual model
+  loader built on top of today's `ArtifactMetadata`
+- an artifact-backed `Predictor` replacing `MockPredictor`, plugged into the
+  same `serving/app.py::create_app` without changing the HTTP layer
 
-Expected (not yet built) shape of an Artifact Bundle: trained model,
-feature schema/version, preprocessing metadata, historical aggregates if
-needed, target/model metadata, `model_version`.
+Valeria owns all of the above, current and planned.
 
 ## 8. Data flow
 
@@ -231,6 +264,12 @@ path import it from the same place.
 - Code and metadata (schema, hashes, row counts) are kept separable from
   confidential raw data — see `DatasetManifest`, which never stores actual
   rows.
+- Incoming serving request payloads — especially each vehicle's `context`,
+  which will carry organizer data once the hackathon starts — must not be
+  dumped to logs. Only metadata (batch size, model version, error *type*,
+  success/failure) may be logged; exception messages and tracebacks are
+  intentionally excluded, since a predictor exception could itself embed
+  request-derived data. See `docs/ML_SERVING_CONTRACT.md` §6.
 
 ## 14. Confirmed invariants
 
@@ -251,6 +290,10 @@ path import it from the same place.
   vehicle-generic (`vehicle`/`route`/`trip`/`stop`).
 - External enrichment is allowed but is not part of the pre-hackathon
   critical path.
+- The provisional serving `context` field is intentionally opaque and will
+  be replaced/tightened once the official CSV ↔ emulator mapping exists.
+- The Python ML service (`serving/`) is stateless across requests — no
+  `VehicleState` or per-vehicle history is stored in Python; see §3.
 
 ### Integration sync points
 
@@ -281,7 +324,10 @@ matter:
 
 Not implemented here, on purpose:
 
-- FastAPI / serving service
+- A model-backed serving implementation: real feature engineering, real
+  model inference, artifact/model-file loading. (A provisional FastAPI shell
+  + `MockPredictor` now exist — see §7 and `docs/ML_SERVING_CONTRACT.md` —
+  but there is no model behind them.)
 - CatBoost/XGBoost/LightGBM or any training pipeline
 - Feature engineering or an invented feature set
 - Emulator client or emulator schema

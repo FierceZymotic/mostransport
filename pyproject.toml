@@ -1,7 +1,7 @@
 [project]
 name = "mostransport-ml"
 version = "0.1.0"
-description = "Offline ML foundation for the Mostransport hackathon: data understanding, target construction, and temporal evaluation."
+description = "Mostransport hackathon: offline ML foundation (data/target/evaluation) plus a provisional ML serving foundation."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -17,6 +17,14 @@ dev = [
     "ruff>=0.6",
     "ipykernel>=6.29",
     "matplotlib>=3.8",
+]
+serving = [
+    "fastapi>=0.115",
+    "uvicorn>=0.30",
+    "pydantic>=2.7",
+    # starlette.testclient (used by fastapi.testclient in our serving tests)
+    # prefers httpx2 over httpx and warns when only httpx is installed.
+    "httpx2>=2.0",
 ]
 
 [build-system]
