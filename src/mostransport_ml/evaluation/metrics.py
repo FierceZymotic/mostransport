@@ -1,4 +1,4 @@
-"""Evaluation metrics. MAE is the organizers' confirmed primary metric."""
+"""Метрики оценки. MAE — подтверждённая организаторами primary-метрика."""
 
 from __future__ import annotations
 
@@ -9,15 +9,16 @@ from sklearn.metrics import mean_absolute_error
 
 
 def mae(y_true: Any, y_pred: Any) -> float:
-    """Mean absolute error, with explicit shape/finiteness validation.
+    """Mean absolute error с явной проверкой shape и finiteness.
 
-    A thin wrapper over `sklearn.metrics.mean_absolute_error` that refuses to
-    silently produce a number from mismatched shapes or non-finite values.
+    Тонкая обёртка над `sklearn.metrics.mean_absolute_error`, которая
+    отказывается молча выдать число из несовпадающих shape или
+    нефинитных значений.
 
-    Raises
-    ------
+    Исключения
+    ----------
     ValueError
-        If shapes disagree, inputs are empty, or contain NaN/inf values.
+        Если shape не совпадают, входы пусты, либо содержат NaN/inf.
     """
     y_true_arr = np.asarray(y_true, dtype=float)
     y_pred_arr = np.asarray(y_pred, dtype=float)

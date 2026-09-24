@@ -1,8 +1,8 @@
-"""Generic, schema-agnostic CSV/dataframe inspection.
+"""Generic, schema-agnostic инспекция CSV/dataframe.
 
-This module has no knowledge of any transport-specific column names. It is
-meant to be the first thing run against a freshly received organizer CSV,
-before any canonicalization or target work starts.
+Этот модуль ничего не знает о transport-specific именах колонок. Он
+рассчитан на то, чтобы быть первым, что запускается на свежеполученном
+organizer CSV — до какой-либо canonicalization или работы над target.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class ColumnProfile:
-    """Profile of a single column."""
+    """Профиль одной колонки."""
 
     name: str
     dtype: str
@@ -38,7 +38,7 @@ class ColumnProfile:
 
 @dataclass(frozen=True)
 class InspectionReport:
-    """Result of profiling a CSV file or dataframe."""
+    """Результат профилирования CSV-файла или dataframe."""
 
     file: Path
     rows_inspected: int
@@ -67,23 +67,25 @@ def inspect_csv(
     time_column: str | None = None,
     unique_count_max_rows: int = 200_000,
 ) -> InspectionReport:
-    """Profile a CSV file without assuming any particular schema.
+    """Профилировать CSV-файл, не предполагая никакой конкретной схемы.
 
-    Parameters
-    ----------
+    Параметры
+    ---------
     path:
-        Path to the CSV file.
+        Путь к CSV-файлу.
     nrows:
-        Optional cap on the number of rows read (passed through to
-        ``pandas.read_csv``). Useful for a fast first look at a large file.
+        Опциональное ограничение на число читаемых строк (передаётся в
+        ``pandas.read_csv``). Полезно для быстрого первого взгляда на
+        большой файл.
     time_column:
-        Optional column name to additionally report the min/max range of.
-        Never inferred — must be explicitly supplied by the caller, since the
-        real time column name is not yet known.
+        Опциональное имя колонки, для которой дополнительно вывести
+        min/max диапазон. Никогда не выводится автоматически — должно
+        быть явно задано вызывающим, поскольку реальное имя колонки
+        времени пока не известно.
     unique_count_max_rows:
-        Skip the (potentially expensive) unique-value count for a column
-        when more rows than this were read, to keep first-hour inspection
-        cheap on large files.
+        Пропустить (потенциально дорогой) подсчёт уникальных значений
+        колонки, если прочитано больше строк, чем этот порог — чтобы
+        инспекция в первый час оставалась дешёвой на больших файлах.
     """
     file_path = Path(path)
     if not file_path.exists():
@@ -105,7 +107,7 @@ def inspect_dataframe(
     time_column: str | None = None,
     unique_count_max_rows: int = 200_000,
 ) -> InspectionReport:
-    """Profile an already-loaded dataframe. Shared by `inspect_csv` and tests."""
+    """Профилировать уже загруженный dataframe. Общая логика для `inspect_csv` и тестов."""
     n_rows = len(df)
     compute_unique = n_rows <= unique_count_max_rows
 

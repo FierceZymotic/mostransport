@@ -1,9 +1,11 @@
-"""Deterministic mock predictor.
+"""Детерминированный mock-predictor.
 
-Exists for backend/frontend integration and serving tests before a real
-model exists, and stays useful afterward as a safe, dependency-free local
-fixture — it is not throwaway scaffolding. Never reads transport-specific
-keys out of `context`, never uses randomness, never raises on its own.
+Существует для интеграции с backend/frontend и serving-тестов до
+появления реальной модели, и остаётся полезным после — как безопасная,
+не требующая зависимостей локальная fixture, а не одноразовый scaffolding.
+Никогда не читает transport-specific ключи из `context`, никогда не
+использует случайность, никогда не бросает исключение по собственной
+инициативе.
 """
 
 from __future__ import annotations
@@ -16,10 +18,11 @@ MOCK_PREDICTED_DELAY = 0.0
 
 
 class MockPredictor:
-    """Always-ready predictor that returns a fixed delay for every vehicle.
+    """Всегда готовый predictor, возвращающий фиксированную задержку для
+    каждого vehicle.
 
-    Must be wired in explicitly (see `mock_app.py`) — nothing in
-    `serving/app.py` defaults to this on its own.
+    Должен подключаться только явно (см. `mock_app.py`) — ничто в
+    `serving/app.py` не выбирает его по умолчанию.
     """
 
     def is_ready(self) -> bool:

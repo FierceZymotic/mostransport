@@ -1,21 +1,38 @@
 # data/
 
-Local, untracked working area for organizer-provided datasets.
+Локальная, не отслеживаемая git'ом рабочая область для организаторских
+датасетов.
 
-- `raw/` — files exactly as received from the organizers. Never edit in place.
-- `interim/` — intermediate outputs of inspection/canonicalization, kept only
-  for local convenience. Safe to delete and regenerate.
-- `processed/` — canonicalized / split datasets ready for evaluation or
-  training. Safe to delete and regenerate from `raw/`.
+- `raw/` — файлы ровно в том виде, в каком получены от организаторов. Не
+  редактировать на месте. Это единственный source of truth для сырых
+  данных.
+- `interim/` — производные локальные данные: промежуточные результаты
+  инспекции/канонизации, только для локального удобства. Не source of
+  truth — источником остаётся `raw/`.
+- `processed/` — производные локальные данные: канонизированные/разбитые
+  датасеты для оценки или обучения. Не source of truth — источником
+  остаётся `raw/`.
 
-## Rules
+`interim/` и `processed/` можно безопасно удалить: `raw/` при этом не
+теряется. Сейчас в репозитории **нет** полноценного автоматического
+recompute-пайплайна, который сам восстановит `interim/`/`processed/` из
+`raw/` одной командой — восстановление означает повторный запуск тех
+шагов offline-flow (см. [`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md)
+§8), которыми эти файлы были получены изначально. Как только появится
+настоящий data pipeline, производные данные здесь должны стать
+воспроизводимыми из `raw/` этим pipeline'ом.
 
-- **Nothing under `raw/`, `interim/`, or `processed/` is tracked by Git**
-  (see `.gitignore`). Only this README and the `.gitkeep` markers are.
-- Organizer datasets must not be committed, published, or otherwise leave
-  the boundaries the hackathon rules allow.
-- Before sending any organizer data to an external service, tool, or AI
-  assistant, check the hackathon's data-usage rules first.
-- Treat everything in this tree as confidential by default.
+## Правила
 
-See `docs/ARCHITECTURE.md` for how this fits into the offline pipeline.
+- **Ничего внутри `raw/`, `interim/` или `processed/` не отслеживается
+  git'ом** (см. `.gitignore`). Отслеживаются только этот README и
+  маркеры `.gitkeep`.
+- Организаторские датасеты нельзя коммитить, публиковать или иным
+  образом выносить за пределы разрешённых правилами хакатона границ.
+- Перед отправкой организаторских данных в любой внешний сервис,
+  инструмент или AI-ассистента — сначала проверить правила хакатона по
+  использованию данных.
+- Считать всё в этом дереве конфиденциальным по умолчанию.
+
+Как это встраивается в offline-пайплайн — см.
+[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md).

@@ -1,12 +1,12 @@
-"""Explicit development app wired to `MockPredictor`.
+"""Explicit development app, подключённое к `MockPredictor`.
 
-Run with:
+Запуск:
 
     uv run uvicorn mostransport_ml.serving.mock_app:app --host 127.0.0.1 --port 8000
 
-This mock wiring is always explicit — `serving/app.py::create_app` never
-defaults to `MockPredictor` on its own; this module is the one place that
-chooses to use it.
+Это подключение mock'а всегда явное — `serving/app.py::create_app`
+никогда не выбирает `MockPredictor` по умолчанию; этот модуль — то самое
+единственное место, которое решает его использовать.
 """
 
 from __future__ import annotations

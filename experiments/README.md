@@ -1,13 +1,14 @@
 # experiments/
 
-Append-only experiment log, written by `mostransport_ml.experiments.log`.
+Append-only лог экспериментов, пишется через
+`mostransport_ml.experiments.log`.
 
-Generated log files (e.g. `runs.jsonl`) are gitignored — they are local
-scratch history, not a source-of-truth artifact store. If a result needs to
-survive across machines or be shared with the team, copy the relevant line(s)
-out rather than committing the whole log.
+Сгенерированные файлы лога (например, `runs.jsonl`) в `.gitignore` — это
+локальная рабочая история, а не source-of-truth хранилище артефактов.
+Если результат нужно сохранить между машинами или поделиться им с
+командой — скопируйте нужные строки, а не коммитьте весь лог.
 
-Each line is a JSON object with at least:
+Каждая строка — JSON-объект как минимум с полями:
 
 - `run_id`, `created_at`
 - `data_version`, `target_version`, `feature_version`
@@ -15,5 +16,6 @@ Each line is a JSON object with at least:
 - `validation_mae`
 - `notes`
 
-See `mostransport_ml.experiments.log.ExperimentLogger` for the writer, and
-`docs/ARCHITECTURE.md` for how this fits into the workflow.
+Про сам writer — `mostransport_ml.experiments.log.ExperimentLogger`; про
+то, как это встраивается в workflow — см.
+[`../docs/ARCHITECTURE.md`](../docs/ARCHITECTURE.md).

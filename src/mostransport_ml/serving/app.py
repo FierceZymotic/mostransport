@@ -1,30 +1,33 @@
-"""FastAPI app factory and endpoints for the provisional ML serving contract.
+"""FastAPI app factory и эндпоинты для provisional ML serving contract.
 
-THIS IS A PROVISIONAL PRE-HACKATHON CONTRACT — see
-docs/ML_SERVING_CONTRACT.md. Endpoints contain no model/feature logic; they
-validate the request, delegate to `InferenceService`, and translate failures
-into safe HTTP errors. There is no hidden default predictor — `create_app`
-always requires one explicitly, so a real deployment can never silently fall
-back to a mock (see `mock_app.py` for the explicit development app).
+ЭТО PROVISIONAL PRE-HACKATHON CONTRACT — см. docs/ML_SERVING_CONTRACT.md.
+Эндпоинты не содержат model/feature-логики; они валидируют запрос,
+делегируют в `InferenceService` и превращают падения в безопасные
+HTTP-ошибки. Скрытого predictor'а по умолчанию нет — `create_app` всегда
+требует его явно, поэтому реальный деплой никогда не может тихо
+скатиться на mock (см. `mock_app.py` — explicit development app).
 
-Confidentiality, on both sides of the wire:
+Конфиденциальность, по обе стороны провода:
 
-- Incoming request payloads (especially each vehicle's `context`, which will
-  hold organizer data once the hackathon starts) are never logged here —
-  only metadata such as batch size, model version, and success/failure.
-- Server-side error logs record only the *type* of an exception
-  (`type(exc).__name__`), never `str(exc)` or a traceback — a predictor
-  exception's message could itself contain data derived from the request.
-- 422 validation responses are sanitized: FastAPI's default body includes
-  the offending `input` value verbatim, which would echo request data
-  (including `context`) straight back to the client. The handler below
-  strips that down to `loc`/`msg`/`type` — and also replaces any `loc`
-  segment that isn't a known field name of this schema, since an unknown
-  *field name* (e.g. a bogus top-level key) is itself request-controlled
-  data (see `_sanitize_loc`).
-- OpenAPI is kept aligned with what each endpoint actually returns (see the
-  `responses=` on each route below) — it is meant to be usable by Andrey's
-  backend as the real integration contract, not a stale default.
+- Входящие payload'ы запроса (особенно `context` каждого vehicle, который
+  после старта хакатона будет нести организаторские данные) здесь никогда
+  не логируются — только метаданные вроде размера батча, версии модели и
+  успеха/неудачи.
+- Server-side логи ошибок фиксируют только *тип* исключения
+  (`type(exc).__name__`), никогда не `str(exc)` и не traceback — сообщение
+  исключения predictor'а само может содержать данные, производные от
+  запроса.
+- Ответы 422 санитизированы: стандартное тело FastAPI включает
+  проблемное значение `input` целиком, что вернуло бы данные запроса
+  (включая `context`) обратно клиенту. Обработчик ниже сокращает это до
+  `loc`/`msg`/`type` — а также заменяет любой сегмент `loc`, не являющийся
+  известным именем поля этой схемы, поскольку неизвестное *имя поля*
+  (например, случайный лишний top-level ключ) — тоже данные,
+  контролируемые запросом (см. `_sanitize_loc`).
+- OpenAPI держится в согласии с тем, что реально возвращает каждый
+  эндпоинт (см. `responses=` на каждом роуте ниже) — рассчитан на то, что
+  backend Андрея использует его как реальный интеграционный контракт, а
+  не устаревшую заглушку.
 """
 
 from __future__ import annotations
@@ -55,11 +58,13 @@ from mostransport_ml.serving.service import (
 
 logger = logging.getLogger("mostransport_ml.serving")
 
-# The only field names this provisional schema actually has. Any other `loc`
-# segment is request-controlled (a client-supplied key, valid or not) and
-# must not be echoed back — see `_sanitize_loc`. "body" is the structural
-# marker FastAPI/Pydantic use for a body-sourced error; every endpoint here
-# takes its input as a single body model, so it's the only one that appears.
+# Единственные имена полей, которые реально есть в этой provisional-схеме.
+# Любой другой сегмент `loc` контролируется запросом (ключ, заданный
+# клиентом, валидный или нет) и не должен эхом возвращаться — см.
+# `_sanitize_loc`. "body" — структурный маркер, которым FastAPI/Pydantic
+# помечают ошибку, пришедшую из тела запроса; каждый эндпоинт здесь
+# принимает вход как одну body-модель, поэтому он единственный, кто
+# встречается.
 _KNOWN_LOC_FIELDS = frozenset(
     {
         "body",
@@ -74,11 +79,11 @@ _REDACTED_LOC_SEGMENT = "<field>"
 
 
 def _sanitize_loc(loc: Sequence[str | int]) -> list[str | int]:
-    """Keep list indexes and known field names; redact everything else.
+    """Оставить индексы списков и известные имена полей; всё остальное — скрыть.
 
-    A validation error's `loc` can contain an arbitrary client-supplied key
-    (e.g. an unexpected top-level field, or — in principle — a path pointing
-    inside the opaque `context` object). Those are request data too.
+    `loc` ошибки валидации может содержать произвольный ключ, заданный
+    клиентом (например, неожиданное top-level поле, или — в принципе —
+    путь внутрь непрозрачного объекта `context`). Это тоже данные запроса.
     """
     return [
         segment
@@ -89,9 +94,10 @@ def _sanitize_loc(loc: Sequence[str | int]) -> list[str | int]:
 
 
 def create_app(predictor: Predictor) -> FastAPI:
-    """Build a FastAPI app wired to the given predictor.
+    """Собрать FastAPI-приложение, подключённое к заданному predictor'у.
 
-    No default: the caller must always supply a `Predictor` explicitly.
+    Без значения по умолчанию: вызывающий обязан всегда явно передать
+    `Predictor`.
     """
     service = InferenceService(predictor)
     app = FastAPI(title="mostransport-ml serving (provisional)")
@@ -100,12 +106,13 @@ def create_app(predictor: Predictor) -> FastAPI:
     async def _sanitized_validation_error(
         _request: Request, exc: RequestValidationError
     ) -> JSONResponse:
-        """Same 422 status as FastAPI's default, but strips `input`/`ctx`
-        (so invalid request data — e.g. a vehicle's `context` — is never
-        echoed back) and sanitizes `loc` (so an arbitrary client-supplied
-        *field name* isn't echoed back either). Built from the same
-        `ValidationErrorResponse` model documented in OpenAPI below, so the
-        runtime body and the published schema can't drift apart."""
+        """Тот же статус 422, что и по умолчанию у FastAPI, но без
+        `input`/`ctx` (поэтому невалидные данные запроса — например,
+        `context` vehicle — никогда не эхо́ятся обратно) и с
+        санитизированным `loc` (поэтому произвольное клиентское *имя
+        поля* тоже не эхо́ится). Строится из той же модели
+        `ValidationErrorResponse`, что документирована в OpenAPI ниже,
+        поэтому runtime-тело и опубликованная схема не могут разойтись."""
         errors = [
             ErrorDetail(loc=_sanitize_loc(error["loc"]), msg=error["msg"], type=error["type"])
             for error in exc.errors()
@@ -115,8 +122,8 @@ def create_app(predictor: Predictor) -> FastAPI:
 
     @app.get("/health", response_model=HealthResponse)
     def health() -> HealthResponse:
-        """Process liveness only. Does not touch the predictor, the
-        organizer emulator, or a database."""
+        """Только process liveness. Не трогает predictor, организаторский
+        эмулятор или базу данных."""
         return HealthResponse()
 
     @app.get(
@@ -127,10 +134,11 @@ def create_app(predictor: Predictor) -> FastAPI:
         },
     )
     def ready() -> JSONResponse:
-        """Predictor/runtime readiness. Returns 503, not 200, both when the
-        predictor reports itself not ready AND when the readiness check
-        itself raises — a broken `is_ready`/`model_version` must never
-        surface as an uncontrolled 500."""
+        """Готовность predictor'а/рантайма. Возвращает 503, а не 200,
+        как когда predictor сообщает, что не готов, ТАК И когда сама
+        проверка готовности бросает исключение — сломанный
+        `is_ready`/`model_version` никогда не должен всплыть как
+        неконтролируемый 500."""
         try:
             is_ready = service.is_ready()
             model_version = service.model_version() if is_ready else None
@@ -168,9 +176,10 @@ def create_app(predictor: Predictor) -> FastAPI:
             logger.warning("prediction_failed event=not_ready batch_size=%d", batch_size)
             raise HTTPException(status_code=503, detail="predictor is not ready") from None
         except (ValidationError, ValueError, PredictorContractError) as exc:
-            # Only the exception's TYPE is logged — never str(exc) or a
-            # traceback. A predictor's exception message or invalid output
-            # could itself be derived from (or embed) request data.
+            # В лог пишется только ТИП исключения — никогда не str(exc) и
+            # не traceback. Сообщение исключения predictor'а или его
+            # невалидный output сами могут быть производными от данных
+            # запроса (или содержать их).
             logger.error(
                 "prediction_failed event=invalid_output error_type=%s batch_size=%d",
                 type(exc).__name__,

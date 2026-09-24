@@ -1,6 +1,7 @@
-"""Tests for safe error handling: predictor exceptions and invalid predictor
-output must never leak a traceback, echo request input, or reach the client
-as malformed JSON — and must never appear in server-side logs either."""
+"""Тесты безопасной обработки ошибок: исключения predictor'а и его
+невалидный output никогда не должны утечь traceback'ом, эхом входа
+запроса или дойти до клиента как некорректный JSON — и никогда не должны
+появиться в server-side логах."""
 
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from mostransport_ml.serving.service import RawPrediction
 
 
 class _ExplodingPredictor:
-    """Fake predictor that always raises, to exercise the 5xx safety net."""
+    """Fake predictor, всегда бросающий исключение — проверка 5xx safety net."""
 
     def is_ready(self) -> bool:
         return True
@@ -29,7 +30,7 @@ class _ExplodingPredictor:
 
 
 class _FixedOutputPredictor:
-    """Fake predictor that returns a fixed (possibly non-finite) delay."""
+    """Fake predictor, возвращающий фиксированную (возможно нефинитную) задержку."""
 
     def __init__(self, predicted_delay: float) -> None:
         self._predicted_delay = predicted_delay
@@ -52,7 +53,7 @@ class _FixedOutputPredictor:
 
 
 class _ReorderingPredictor:
-    """Fake predictor that returns correct predictions but swaps their order."""
+    """Fake predictor, возвращающий корректные predictions, но в другом порядке."""
 
     def is_ready(self) -> bool:
         return True
@@ -70,7 +71,7 @@ class _ReorderingPredictor:
 
 
 class _WrongIdPredictor:
-    """Fake predictor that returns the right count/order but a wrong id."""
+    """Fake predictor с верным count/order, но неверным id."""
 
     def is_ready(self) -> bool:
         return True
@@ -92,8 +93,8 @@ class _WrongIdPredictor:
 
 
 class _WrongCountPredictor:
-    """Fake predictor that returns too many (extra > 0) or too few
-    (extra < 0) predictions relative to the input batch."""
+    """Fake predictor, возвращающий слишком много (extra > 0) или слишком
+    мало (extra < 0) predictions относительно входного batch'а."""
 
     def __init__(self, extra: int) -> None:
         self._extra = extra
@@ -124,8 +125,8 @@ class _WrongCountPredictor:
 
 
 class _ClearingPredictor:
-    """Fake predictor that empties `request.vehicles` in place and returns
-    a matching (but now-meaningless) empty prediction list."""
+    """Fake predictor, очищающий `request.vehicles` на месте и возвращающий
+    соответствующий (но теперь бессмысленный) пустой список predictions."""
 
     def is_ready(self) -> bool:
         return True
@@ -139,8 +140,8 @@ class _ClearingPredictor:
 
 
 class _IdRewritingPredictor:
-    """Fake predictor that rewrites a vehicle's id on the request itself,
-    then (dishonestly) returns a prediction matching its own rewrite."""
+    """Fake predictor, переписывающий id vehicle прямо в самом request'е, а
+    затем (нечестно) возвращающий prediction, совпадающий с его же правкой."""
 
     def is_ready(self) -> bool:
         return True
@@ -159,8 +160,9 @@ class _IdRewritingPredictor:
 
 
 class _OrderMutatingPredictor:
-    """Fake predictor that reverses `request.vehicles` in place, then
-    (consistently, from its own point of view) returns matching predictions."""
+    """Fake predictor, разворачивающий `request.vehicles` на месте, а затем
+    (последовательно, со своей точки зрения) возвращающий соответствующие
+    predictions."""
 
     def is_ready(self) -> bool:
         return True
@@ -179,7 +181,7 @@ class _OrderMutatingPredictor:
 
 
 class _PredictionTimeRewritingPredictor:
-    """Fake predictor that rewrites `request.prediction_time` in place."""
+    """Fake predictor, переписывающий `request.prediction_time` на месте."""
 
     def is_ready(self) -> bool:
         return True
@@ -198,7 +200,7 @@ class _PredictionTimeRewritingPredictor:
 
 
 class _HorizonRewritingPredictor:
-    """Fake predictor that rewrites `request.horizon_minutes` in place."""
+    """Fake predictor, переписывающий `request.horizon_minutes` на месте."""
 
     def is_ready(self) -> bool:
         return True
@@ -232,7 +234,7 @@ def test_predictor_exception_returns_safe_5xx_without_traceback_or_input_echo():
     body_text = response.text
     assert "Traceback" not in body_text
     assert "/home/fz/should-not-leak" not in body_text
-    assert "synthetic" not in body_text  # request content (id/context) not echoed
+    assert "synthetic" not in body_text  # содержимое запроса (id/context) не эхо́ится
 
 
 def test_predictor_exception_secret_message_absent_from_response_and_logs(caplog):
@@ -255,7 +257,7 @@ def test_predictor_exception_secret_message_absent_from_response_and_logs(caplog
     assert 500 <= response.status_code < 600
     assert secret not in response.text
     assert secret not in caplog.text
-    # The error TYPE is still safe to log — it carries no request data.
+    # ТИП ошибки по-прежнему безопасно логировать — он не несёт данных запроса.
     assert "RuntimeError" in caplog.text
 
 
@@ -290,7 +292,7 @@ def test_prediction_missing_count_returns_safe_500():
 
 
 def test_prediction_exact_correspondence_still_returns_200():
-    """The contract check must not reject a predictor that gets it right."""
+    """Проверка контракта не должна отклонять predictor, который делает всё правильно."""
     client = TestClient(create_app(_FixedOutputPredictor(0.0)))
     response = client.post("/api/v1/predict/batch", json=_payload("a", "b"))
 
@@ -303,7 +305,7 @@ def test_predictor_nan_output_returns_safe_5xx_with_strict_json():
     response = client.post("/api/v1/predict/batch", json=_payload())
 
     assert 500 <= response.status_code < 600
-    json.loads(response.text)  # must be standard, parseable JSON — no bare NaN token
+    json.loads(response.text)  # обязан быть стандартным, парсящимся JSON — без голого токена NaN
     assert "NaN" not in response.text
 
 
@@ -325,15 +327,15 @@ def test_predictor_negative_infinity_output_returns_safe_5xx():
     assert "Infinity" not in response.text
 
 
-# --- request-mutation protection: a predictor must not be able to redefine
-# what "the request" was after the fact ---------------------------------
+# --- request-mutation protection: predictor не должен суметь задним числом
+# переопределить, чем был "request" ---------------------------------
 
 
 def test_predictor_clearing_vehicles_returns_safe_500_not_empty_200():
     client = TestClient(create_app(_ClearingPredictor()))
     response = client.post("/api/v1/predict/batch", json=_payload("a"))
 
-    # The vulnerable behavior would have been 200 with predictions=[].
+    # Уязвимое поведение выглядело бы как 200 с predictions=[].
     assert 500 <= response.status_code < 600
     assert "predictor produced invalid output" in response.text
 
@@ -370,7 +372,7 @@ def test_predictor_rewriting_horizon_minutes_returns_safe_500():
 
 
 def test_non_mutating_predictor_still_returns_200():
-    """The mutation check must not reject a predictor that behaves correctly."""
+    """Проверка мутации не должна отклонять predictor, ведущий себя корректно."""
     payload = _payload("a", "b") | {"horizon_minutes": 15}
     client = TestClient(create_app(_FixedOutputPredictor(0.0)))
     response = client.post("/api/v1/predict/batch", json=payload)
@@ -382,13 +384,14 @@ def test_non_mutating_predictor_still_returns_200():
 
 
 def test_response_uses_original_request_envelope_not_mutated_values():
-    """Even in the mutation cases, whatever *does* reach the client (if
-    anything did) must never carry the predictor's rewritten values — here
-    confirmed via the safe-failure path, since these predictors are rejected
-    outright rather than producing a response at all."""
+    """Даже в случаях мутации то, что *действительно* доходит до клиента
+    (если вообще доходит), никогда не должно нести переписанные predictor'ом
+    значения — здесь это подтверждается через safe-failure путь, поскольку
+    такие predictor'ы отклоняются целиком, вместо того чтобы вообще
+    сформировать ответ."""
     client = TestClient(create_app(_PredictionTimeRewritingPredictor()))
     response = client.post("/api/v1/predict/batch", json=_payload("a") | {"horizon_minutes": 15})
     assert 500 <= response.status_code < 600
-    # No response body field could have leaked the mutated envelope, because
-    # there is no successful response at all.
+    # Ни одно поле тела ответа не могло утечь мутированный конверт, потому
+    # что успешного ответа вообще не существует.
     assert response.json() == {"detail": "predictor produced invalid output"}

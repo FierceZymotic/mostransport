@@ -1,8 +1,9 @@
-"""Append-only JSONL experiment log.
+"""Append-only JSONL лог экспериментов.
 
-Deliberately not MLflow: a single, dependency-free writer that's enough for
-a 48-hour hackathon. Only `model_name` and `validation_mae` are required —
-everything else can be filled in incrementally as inputs become known.
+Намеренно не MLflow: единственный writer без внешних зависимостей,
+которого достаточно для 48-часового хакатона. Обязательны только
+`model_name` и `validation_mae` — всё остальное можно заполнять
+постепенно, по мере появления входных данных.
 """
 
 from __future__ import annotations
@@ -17,9 +18,10 @@ from typing import Any
 
 
 def _validate_and_normalize_mae(value: float | None) -> float | None:
-    """`None` (not yet known) passes through; any other value must be a
-    finite number. Rejects NaN/+Infinity/-Infinity, which are not valid JSON
-    and would make the experiment log unreliable to read back."""
+    """`None` (пока не известно) проходит как есть; любое другое значение
+    обязано быть конечным числом. Отклоняет NaN/+Infinity/-Infinity — они
+    не валидный JSON и сделали бы лог экспериментов ненадёжным при
+    последующем чтении."""
     if value is None:
         return None
     try:
@@ -51,17 +53,17 @@ class ExperimentRecord:
 
 
 class ExperimentLogger:
-    """Appends `ExperimentRecord`s to a JSONL file, one record per line."""
+    """Дописывает `ExperimentRecord` в JSONL-файл, одна запись на строку."""
 
     def __init__(self, path: str | Path) -> None:
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
 
     def log(self, record: ExperimentRecord) -> None:
-        # allow_nan=False is a defensive backstop: ExperimentRecord already
-        # rejects non-finite validation_mae, but this keeps the JSONL output
-        # strictly valid JSON even if a non-finite value ever reached here
-        # through some other field.
+        # allow_nan=False — defensive backstop: ExperimentRecord уже
+        # отклоняет нефинитный validation_mae, но это гарантирует, что
+        # JSONL-вывод останется строго валидным JSON, даже если нефинитное
+        # значение когда-нибудь попадёт сюда через другое поле.
         with self.path.open("a", encoding="utf-8") as f:
             f.write(json.dumps(record.to_dict(), ensure_ascii=False, allow_nan=False) + "\n")
 
@@ -76,7 +78,7 @@ class ExperimentLogger:
         params: dict[str, Any] | None = None,
         notes: str | None = None,
     ) -> ExperimentRecord:
-        """Convenience constructor + log in one call. Returns the record logged."""
+        """Удобный конструктор + запись в лог одним вызовом. Возвращает записанный record."""
         record = ExperimentRecord(
             model_name=model_name,
             validation_mae=validation_mae,

@@ -34,8 +34,8 @@ def test_missing_required_field_raises():
 
 
 def test_rename_colliding_with_existing_unrenamed_column_raises():
-    # columns = ["a", "b"], rename = {"a": "b"} — "b" already exists and is
-    # not itself being renamed away, so this must fail fast.
+    # columns = ["a", "b"], rename = {"a": "b"} — "b" уже существует и сама
+    # не переименовывается, поэтому это обязано упасть fail-fast.
     df = pd.DataFrame({"a": [1], "b": [2]})
     mapping = CanonicalMapping(source_name="synthetic-v1", rename={"a": "b"})
     with pytest.raises(ValueError):
@@ -43,7 +43,7 @@ def test_rename_colliding_with_existing_unrenamed_column_raises():
 
 
 def test_multiple_sources_to_same_destination_raises():
-    # columns = ["a", "c"], rename = {"a": "x", "c": "x"} — ambiguous target.
+    # columns = ["a", "c"], rename = {"a": "x", "c": "x"} — неоднозначная цель.
     df = pd.DataFrame({"a": [1], "c": [2]})
     mapping = CanonicalMapping(source_name="synthetic-v1", rename={"a": "x", "c": "x"})
     with pytest.raises(ValueError):
@@ -51,7 +51,7 @@ def test_multiple_sources_to_same_destination_raises():
 
 
 def test_disjoint_rename_targets_pass():
-    # columns = ["a", "b"], rename = {"a": "x", "b": "y"} — no collision.
+    # columns = ["a", "b"], rename = {"a": "x", "b": "y"} — без коллизии.
     df = pd.DataFrame({"a": [1], "b": [2]})
     mapping = CanonicalMapping(source_name="synthetic-v1", rename={"a": "x", "b": "y"})
     result = apply_canonical_mapping(df, mapping)
@@ -60,8 +60,8 @@ def test_disjoint_rename_targets_pass():
 
 
 def test_swap_style_rename_is_not_a_false_collision():
-    # a -> b, b -> c: "b" is itself being renamed away, so the destination
-    # "b" for the first mapping does not collide with anything left behind.
+    # a -> b, b -> c: "b" сама переименовывается прочь, поэтому назначение
+    # "b" для первого mapping'а не конфликтует ни с чем оставшимся.
     df = pd.DataFrame({"a": [1], "b": [2]})
     mapping = CanonicalMapping(source_name="synthetic-v1", rename={"a": "b", "b": "c"})
     result = apply_canonical_mapping(df, mapping)

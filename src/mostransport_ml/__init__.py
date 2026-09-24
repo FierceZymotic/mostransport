@@ -1,7 +1,7 @@
-"""Offline ML foundation for the Mostransport hackathon.
+"""Offline ML-фундамент хакатона Мостранспорта.
 
-See docs/ARCHITECTURE.md for scope, ownership boundaries, and the
-current set of confirmed facts / open TBDs.
+Про scope, границы ownership и текущий набор подтверждённых фактов/TBD —
+см. docs/PROJECT_KNOWLEDGE.md и docs/ARCHITECTURE.md.
 """
 
 __all__: list[str] = []

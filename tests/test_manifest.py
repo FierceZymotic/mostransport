@@ -57,10 +57,10 @@ def test_manifest_json_roundtrip(sample_csv):
 
 def test_manifest_never_stores_row_values(sample_csv):
     manifest = build_manifest(sample_csv, label="test-v1")
-    # Only metadata fields at the dataset level — no place for actual cell
-    # values to hide.
+    # Только метаданные на уровне датасета — нет места, где спрятать
+    # реальные значения ячеек.
     assert set(manifest.to_dict().keys()) == {"label", "source_files", "created_at"}
-    # ...and none at the per-file level either.
+    # ...и на уровне отдельного файла тоже нет.
     assert set(manifest.to_dict()["source_files"][0].keys()) == {
         "path",
         "size_bytes",
@@ -87,8 +87,8 @@ def test_build_manifest_multi_file_with_different_schemas(tmp_path):
     assert len(manifest.source_files) == 2
     telemetry_source, schedule_source = manifest.source_files
 
-    # Each file's own schema and row count is preserved independently —
-    # neither file's schema is silently applied to the other.
+    # Собственная схема и row count каждого файла сохраняются независимо —
+    # схема одного файла молча не применяется к другому.
     assert telemetry_source.columns == ("a", "b")
     assert telemetry_source.row_count == 2
     assert schedule_source.columns == ("x", "y", "z")
@@ -97,9 +97,9 @@ def test_build_manifest_multi_file_with_different_schemas(tmp_path):
 
 
 def test_build_manifest_time_column_applies_only_where_present(tmp_path):
-    # One file has the time column, the other doesn't — this must not force
-    # a shared schema or raise, since the time_column exists in at least one
-    # file.
+    # В одном файле есть колонка времени, в другом нет — это не должно
+    # ни навязать общую схему, ни бросить исключение, поскольку time_column
+    # существует хотя бы в одном файле.
     with_time = tmp_path / "with_time.csv"
     without_time = tmp_path / "without_time.csv"
 

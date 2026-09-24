@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""First-hour, schema-agnostic CSV inspection CLI.
+"""CLI для schema-agnostic инспекции CSV в первый час хакатона.
 
-Examples
---------
+Примеры
+-------
     uv run python scripts/inspect_csv.py --path data/raw/organizer.csv
     uv run python scripts/inspect_csv.py --path data/raw/organizer.csv \\
         --nrows 5000 --time-column event_time

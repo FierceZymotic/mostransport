@@ -1,4 +1,4 @@
-"""Generic, domain-agnostic dataset inspection, manifesting, and canonicalization.
+"""Generic, domain-agnostic инспекция датасета, manifest и canonicalization.
 
-Nothing in this package assumes a specific organizer CSV schema.
+Ничто в этом пакете не предполагает конкретную organizer CSV schema.
 """

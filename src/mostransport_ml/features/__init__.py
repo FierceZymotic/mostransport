@@ -1,6 +1,6 @@
-"""Shared feature engineering — not yet implemented.
+"""Общий feature engineering — ещё не реализовано.
 
-Owned by Valeria. The critical invariant: offline training and online
-serving must import the *same* feature logic from this package, rather than
-each keeping its own copy. See docs/ARCHITECTURE.md.
+Владелец — Valeria. Критический инвариант: offline-обучение и
+online-serving обязаны импортировать *одну и ту же* feature-логику из
+этого пакета, а не держать каждый свою копию. См. docs/ARCHITECTURE.md.
 """

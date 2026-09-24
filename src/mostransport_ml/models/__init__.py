@@ -1,5 +1,5 @@
-"""Model training / preprocessing pipeline — not yet implemented.
+"""Pipeline обучения модели / preprocessing — ещё не реализовано.
 
-Owned by Valeria, once a real target and feature set exist. See
-docs/ARCHITECTURE.md.
+Владелец — Valeria, появится после реального target и набора признаков.
+См. docs/ARCHITECTURE.md.
 """

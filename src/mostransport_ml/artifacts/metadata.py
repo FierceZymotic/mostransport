@@ -1,11 +1,11 @@
-"""Minimal, stable artifact metadata contract.
+"""Минимальный, стабильный контракт метаданных артефакта.
 
-This is NOT the real Artifact Bundle loader — the actual model file format
-(CatBoost, or otherwise) is unknown until a real model exists.
-`ArtifactMetadata` only gives experiments and a future artifact-backed
-predictor a stable, strictly-JSON-serializable way to describe a trained
-model version. It never holds raw data, and callers must not put an
-absolute, user-specific path into any of its fields.
+Это НЕ настоящий загрузчик Artifact Bundle — реальный формат модельного
+файла (CatBoost или другой) неизвестен, пока не появится реальная модель.
+`ArtifactMetadata` даёт экспериментам и будущему artifact-backed
+predictor'у только стабильный, строго-JSON-сериализуемый способ описать
+версию обученной модели. Никогда не хранит сырые данные; вызывающие не
+должны класть в любое из его полей абсолютный, user-specific путь.
 """
 
 from __future__ import annotations
@@ -19,11 +19,11 @@ from typing import Any
 
 @dataclass(frozen=True)
 class ArtifactMetadata:
-    """Metadata describing one trained model artifact.
+    """Метаданные, описывающие один артефакт обученной модели.
 
-    `model_version`, `created_at`, `model_type`, and `target_name` are
-    required; everything else is optional and filled in as it becomes known.
-    `validation_mae`, if given, must be finite and non-negative.
+    `model_version`, `created_at`, `model_type` и `target_name` обязательны;
+    всё остальное опционально и заполняется по мере появления. Если
+    `validation_mae` задан, он обязан быть конечным и неотрицательным.
     """
 
     model_version: str

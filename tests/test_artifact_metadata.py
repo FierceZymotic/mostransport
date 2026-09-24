@@ -60,7 +60,7 @@ def test_negative_infinity_validation_mae_rejected():
 
 def test_serialized_json_is_strict_standard_json():
     metadata = _make(validation_mae=2.0)
-    parsed = json.loads(metadata.to_json())  # must parse as standard JSON
+    parsed = json.loads(metadata.to_json())  # обязан парситься как стандартный JSON
     assert parsed["model_version"] == "mock-v0"
     assert parsed["validation_mae"] == 2.0
 

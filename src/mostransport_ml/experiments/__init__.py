@@ -1,1 +1,1 @@
-"""Append-only JSONL experiment logging. See `log.py`."""
+"""Append-only JSONL-лог экспериментов. См. `log.py`."""

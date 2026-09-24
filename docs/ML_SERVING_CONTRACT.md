@@ -1,87 +1,99 @@
 # ML Serving Contract (provisional v0)
 
-**THIS IS A PROVISIONAL PRE-HACKATHON CONTRACT.** It exists only to unblock
-HTTP integration between the backend (Andrey) and the Python ML service
-(Valeria) before the organizer's task spec, CSV schema, and CSV ↔ emulator
-mapping are released. Once those land, this contract will be tightened —
-see §8. The current HTTP layer and app structure are sufficient for
-mock/pre-hackathon serving; the request/response *shapes* will change, and
-the Artifact Contract sync point may still extend the app/Predictor
-boundary itself once real model metadata semantics exist (see
-`docs/ARCHITECTURE.md` §7).
+**ЭТО PROVISIONAL PRE-HACKATHON CONTRACT.** Он существует только для того,
+чтобы разблокировать HTTP-интеграцию между backend'ом (Andrey) и Python ML
+Service (Valeria) до публикации task spec организаторов, схемы CSV и
+mapping CSV ↔ emulator. Как только они появятся, контракт будет
+ужесточён — см. §8. Текущие HTTP-слой и структура приложения достаточны
+для mock/pre-hackathon serving; *формы* запроса/ответа изменятся, а точка
+синхронизации Artifact Contract может ещё расширить саму границу
+app/Predictor, когда появится реальная семантика метаданных модели (см.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §7).
 
-## 1. Purpose
+## 1. Назначение
 
-Let the backend call the Python ML service over HTTP today, using a
-deterministic mock predictor, so both sides can build and test their
-integration ahead of a real model.
+Дать backend'у возможность уже сегодня вызывать Python ML Service по
+HTTP, используя детерминированный mock-предиктор, чтобы обе стороны могли
+собирать и тестировать свою интеграцию до появления реальной модели.
 
-## 2. Current provisional status
+## 2. Текущий provisional-статус
 
-- Implementation: `src/mostransport_ml/serving/`.
-- Predictor in use: `MockPredictor` (`serving/mock.py`) — deterministic,
-  always ready, `model_version = "mock-v0"`, `predicted_delay = 0.0` for
-  every vehicle.
-- No real feature engineering, no real model, no artifact loading.
-- Run it explicitly — there is no hidden default-to-mock behavior:
+- Реализация: `src/mostransport_ml/serving/`.
+- Используемый predictor: `MockPredictor` (`serving/mock.py`) —
+  детерминированный, всегда готов, `model_version = "mock-v0"`,
+  `predicted_delay = 0.0` для каждого vehicle.
+- Реальной feature-логики, реальной модели, загрузки артефакта нет.
+- Запускается только явно — никакого скрытого default-to-mock поведения:
 
   ```bash
   uv sync --extra dev --extra serving
   uv run uvicorn mostransport_ml.serving.mock_app:app --host 127.0.0.1 --port 8000
   ```
 
-## 3. Endpoint list
+## 3. Список эндпоинтов
 
-| Method | Path                        | Purpose                          |
-|--------|-----------------------------|-----------------------------------|
-| GET    | `/health`                   | Process liveness                  |
-| GET    | `/ready`                    | Predictor/runtime readiness       |
-| POST   | `/api/v1/predict/batch`     | Batch delay prediction            |
+| Method | Path                        | Назначение                          |
+|--------|-----------------------------|--------------------------------------|
+| GET    | `/health`                   | Process liveness                     |
+| GET    | `/ready`                    | Готовность predictor'а/рантайма      |
+| POST   | `/api/v1/predict/batch`     | Пакетное прогнозирование задержки    |
 
-No other endpoints exist. `/openapi.json` and `/docs` are available (FastAPI
-defaults) for interactive/schema inspection. **OpenAPI is kept aligned with
-the actual runtime contract** — every response status an endpoint can really
-return is documented against the schema it really returns (see §6); it is
-meant to be usable by the backend as the integration contract, not a stale
-default.
+Других эндпоинтов нет. `/openapi.json` и `/docs` доступны (стандартные
+для FastAPI) для интерактивного просмотра схемы. **OpenAPI держится в
+согласии с реальным runtime-контрактом** — каждый статус ответа, который
+эндпоинт действительно может вернуть, задокументирован против той схемы,
+которую он действительно возвращает (см. §6); он рассчитан на то, чтобы
+backend использовал его как интеграционный контракт, а не устаревшую
+заглушку.
 
 ## 4. PredictionBatchRequest v0
 
 ```jsonc
 {
-  "prediction_time": "2026-01-01T00:00:00Z",   // ISO 8601 datetime, any timezone or none
-  "horizon_minutes": 15,                        // optional; None, or finite and > 0
+  "prediction_time": "2026-01-01T00:00:00Z",   // ISO 8601 datetime, любой часовой пояс или без него
+  "horizon_minutes": 15,                        // опционально; None либо конечное число > 0, в минутах
   "vehicles": [
     {
-      "vehicle_id": "synthetic-1",              // string, matches backend's current vehicle_id type
-      "context": { "synthetic": true }          // opaque JSON object — see below
+      "vehicle_id": "synthetic-1",              // строка, совпадает с текущим типом vehicle_id в backend'е
+      "context": { "synthetic": true }          // непрозрачный JSON-объект — см. ниже
     }
   ]
 }
 ```
 
-Rules:
+Правила:
 
-- Top-level unknown fields are **rejected** (`extra="forbid"`).
-- Each vehicle envelope's unknown fields are **rejected**.
-- `context` **must** be a JSON object (not a string, number, array, or null)
-  and is currently required on every vehicle (send `{}` if you have nothing
-  to put there yet).
-- `vehicles` must have **at least 1** entry. No maximum is imposed yet —
-  the emulator's realistic batch size isn't known.
-- `vehicle_id` is a plain string, matching the type already used in the
-  backend's current `TelemetryEventDto.vehicle_id`.
-- `horizon_minutes`, when present, must be a **finite number strictly
-  greater than 0** — `0`, negative values, `NaN`, and `Infinity`/`-Infinity`
-  are all rejected with `422`. There is no hardcoded default, no assumed
-  unit, and no maximum yet — this is a generic sanity bound, not a guess at
-  the organizer's real horizon.
+- Неизвестные top-level поля **отклоняются** (`extra="forbid"`).
+- Неизвестные поля внутри конверта vehicle **отклоняются**.
+- `context` **обязан** быть JSON-объектом (не строкой, числом, массивом
+  или null) и сейчас обязателен у каждого vehicle (пришлите `{}`, если
+  пока нечего туда положить).
+- `vehicles` обязан содержать **минимум 1** элемент. Максимум пока не
+  задан — реалистичный размер батча эмулятора неизвестен.
+- `vehicle_id` — обычная строка, совпадает с типом, уже используемым в
+  текущем `TelemetryEventDto.vehicle_id` backend'а.
+- `horizon_minutes`, если передан, обязан быть **конечным числом строго
+  больше 0**, интерпретируемым как число минут (это буквально следует из
+  имени поля в текущем provisional API) — `0`, отрицательные значения,
+  `NaN` и `Infinity`/`-Infinity` отклоняются с `422`. Здесь нет
+  захардкоженного значения по умолчанию и максимума — граница `> 0` это
+  generic sanity-ограничение, а не догадка о конкретном числе, которое
+  использует organizer.
 
-**`context` is intentionally opaque.** Nothing on the Python side reads any
-key out of it — it exists purely to unblock HTTP integration. It **will be
-replaced or tightened into a real typed schema** once the official CSV ↔
-emulator field mapping is released. Do not build backend logic that depends
-on specific keys inside it surviving unchanged.
+  **CURRENT vs TBD:** то, что *это provisional-поле* называется и
+  трактуется в минутах — факт нашего сегодняшнего API, а не организаторов.
+  TBD остаётся: официальная семантика horizon у организаторов, обязателен
+  ли он вообще в их контракте, какое конкретное значение использовать, и
+  совпадёт ли официальный horizon с этим provisional полем один в один —
+  или потребует переименования/другой единицы при ужесточении контракта
+  (см. §8).
+
+**`context` намеренно непрозрачен.** Ничто на Python-стороне не читает ни
+один ключ из него — он существует исключительно чтобы разблокировать
+HTTP-интеграцию. Он **будет заменён или ужесточён в реальную типизированную
+схему**, как только появится официальный mapping CSV ↔ emulator. Не
+стройте backend-логику, зависящую от того, что конкретные ключи внутри
+него переживут этот переход без изменений.
 
 ## 5. PredictionBatchResponse v0
 
@@ -90,133 +102,147 @@ on specific keys inside it surviving unchanged.
   "prediction_time": "2026-01-01T00:00:00Z",
   "horizon_minutes": 15,
   "model_version": "mock-v0",
-  "target_name": null,          // optional; TBD
-  "target_unit": null,          // optional; units TBD
+  "target_name": null,          // опционально; TBD
+  "target_unit": null,          // опционально; единица измерения TBD
   "predictions": [
     {
       "vehicle_id": "synthetic-1",
-      "predicted_delay": 0.0,   // finite number when status == "ok"; unit TBD
+      "predicted_delay": 0.0,   // конечное число при status == "ok"; единица измерения TBD
       "status": "ok"
     }
   ]
 }
 ```
 
-- **Invariant:** `status == "ok"` if and only if `predicted_delay` is a
-  present, finite number. Any other status (`insufficient_data`, `error`)
-  always carries `predicted_delay: null`. This is enforced at the schema
-  level (`VehiclePrediction`), not just by convention — a prediction
-  violating it is rejected before the response is ever built.
-- `predicted_delay` is a plain numeric value — **never** `NaN`/`Infinity`.
-  A predictor that produces a non-finite value causes a controlled 500, not
-  a malformed response (see §6).
-- The field is deliberately **not** named `predicted_delay_sec` or
-  `predicted_delay_minutes` — the unit is unknown until the organizer
-  releases target semantics. `target_unit` will carry that once it's known.
-- `status` is one of: `ok`, `insufficient_data`, `error`. `MockPredictor`
-  always returns `ok`.
-- The response contains **no** risk level, probability, SHAP values, or
-  dispatcher recommendation. Turning a delay into a LOW/MEDIUM/HIGH risk
-  classification or an actionable recommendation is backend/product logic,
-  not this service's job.
+- **Инвариант:** `status == "ok"` тогда и только тогда, когда
+  `predicted_delay` присутствует и является конечным числом. Любой другой
+  статус (`insufficient_data`, `error`) всегда несёт `predicted_delay:
+  null`. Это проверяется на уровне схемы (`VehiclePrediction`), а не
+  просто по договорённости — prediction, нарушающий инвариант, отклоняется
+  ещё до построения ответа.
+- `predicted_delay` — обычное числовое значение, **никогда**
+  `NaN`/`Infinity`. Если predictor выдаёт нефинитное значение, это
+  превращается в контролируемый `500`, а не в некорректный ответ (см. §6).
+- Поле намеренно **не** названо `predicted_delay_sec` или
+  `predicted_delay_minutes` — единица измерения неизвестна до публикации
+  организатором семантики таргета. `target_unit` понесёт эту информацию,
+  как только она появится.
+- `status` — одно из: `ok`, `insufficient_data`, `error`. `MockPredictor`
+  всегда возвращает `ok`.
+- Ответ **не** содержит уровень риска, вероятность, SHAP-значения или
+  рекомендацию диспетчеру. Превращение задержки в классификацию
+  LOW/MEDIUM/HIGH или в actionable-рекомендацию — это backend/product
+  логика, не задача этого сервиса.
 
-## 6. Error semantics
+## 6. Семантика ошибок
 
-| Situation                                    | Response                                  | Schema |
-|-----------------------------------------------|--------------------------------------------|--------|
-| Invalid request body                          | `422`, sanitized detail (see below)       | `ValidationErrorResponse` |
-| Predictor not ready                           | `503`, generic `detail`                    | `ErrorResponse` |
-| Predictor violates the identity/order/mutation/readiness-type contract, or otherwise produces invalid output | `500`, generic `detail`, no traceback | `ErrorResponse` |
-| Predictor raises for any other reason         | `500`, generic `detail`, no traceback     | `ErrorResponse` |
+| Ситуация                                      | Ответ                                       | Схема |
+|-------------------------------------------------|-----------------------------------------------|--------|
+| Невалидное тело запроса                         | `422`, санитизированный detail (см. ниже)     | `ValidationErrorResponse` |
+| Predictor не готов                              | `503`, generic `detail`                       | `ErrorResponse` |
+| Predictor нарушает identity/order/mutation/readiness-type контракт, либо иначе выдаёт невалидный output | `500`, generic `detail`, без traceback | `ErrorResponse` |
+| Predictor падает по любой другой причине        | `500`, generic `detail`, без traceback        | `ErrorResponse` |
 
-`ValidationErrorResponse` is `{"detail": [ErrorDetail, ...]}` where each
-`ErrorDetail` is exactly `{"loc": [...], "msg": "...", "type": "..."}` — no
-`input`, no `ctx`. `ErrorResponse` is exactly `{"detail": "<short message>"}`.
-Both are real Pydantic models (`serving/schemas.py`) used to build the
-response body itself, so the published OpenAPI schema and the actual
-runtime body cannot drift apart; FastAPI's own default `HTTPValidationError`
-schema (which would otherwise advertise `input`/`ctx`) is not published.
+`ValidationErrorResponse` — это `{"detail": [ErrorDetail, ...]}`, где
+каждый `ErrorDetail` — ровно `{"loc": [...], "msg": "...", "type": "..."}`
+— без `input`, без `ctx`. `ErrorResponse` — ровно `{"detail": "<короткое
+сообщение>"}`. Обе — реальные Pydantic-модели (`serving/schemas.py`),
+которыми строится само тело ответа, поэтому опубликованная OpenAPI-схема
+и реальное runtime-тело не могут разойтись; стандартная схема FastAPI
+`HTTPValidationError` (которая иначе рекламировала бы `input`/`ctx`) не
+публикуется.
 
-The backend should treat any non-2xx response as "prediction unavailable
-right now" and continue operating — this service does not implement retries
-or circuit breaking; that policy belongs to the backend (TBD there).
+Backend должен трактовать любой не-2xx ответ как "прогноз сейчас
+недоступен" и продолжать работать — этот сервис не реализует retry или
+circuit breaking; эта политика — ответственность backend'а (TBD там).
 
-**Predictor output contract:** a predictor must return exactly one
-prediction per input vehicle, in the same order, with a matching
-`vehicle_id` at each position — checked against the *original* request, not
-whatever the predictor's copy of it looks like afterward (see next
-paragraph). A predictor that reorders, drops, adds, or mismatches an id is
-treated as producing invalid output (`500`) — this service never silently
-re-sorts or re-maps predictor output to "fix" it.
+**Контракт output'а predictor'а:** predictor обязан вернуть ровно один
+prediction на каждый входной vehicle, в том же порядке, с совпадающим
+`vehicle_id` на каждой позиции — сверяется с *исходным* запросом, а не с
+тем, как выглядит копия запроса у predictor'а к моменту завершения (см.
+следующий абзац). Predictor, который переставляет порядок, теряет,
+добавляет или путает id, трактуется как выдавший невалидный output
+(`500`) — этот сервис никогда молча не пересортирует и не перемаппит
+output predictor'а, чтобы "исправить" его.
 
-**A predictor must not mutate the request it is given.** `predict_batch`
-receives `PredictionBatchRequest` by reference; this service snapshots
-`prediction_time`, `horizon_minutes`, and the ordered vehicle ids *before*
-calling the predictor, and re-checks them afterward. Any change — including
-clearing `vehicles` and returning an empty prediction list — is a contract
-violation (`500`), not a way to short-circuit validation. The response is
-always built from the original snapshot, never from a possibly-mutated
-request.
+**Predictor не должен мутировать переданный ему запрос.** `predict_batch`
+получает `PredictionBatchRequest` по ссылке; сервис снимает снимок
+(`prediction_time`, `horizon_minutes`, упорядоченные vehicle id) *до*
+вызова predictor'а и сверяет его после. Любое изменение — включая очистку
+`vehicles` и возврат пустого списка predictions — это нарушение контракта
+(`500`), а не способ обойти валидацию. Ответ всегда строится из исходного
+снимка, никогда из потенциально изменённого запроса.
 
-**Predictor readiness/model_version have a runtime-checked type contract,**
-not just a type hint: `is_ready()` must return exactly `bool` (a truthy
-string or `1` is rejected, not coerced), and once ready, `model_version()`
-must return a non-empty `str`. A predictor that violates this is treated as
-"not ready" for `/ready` (`503`) and as invalid output for `/predict`
-(`500`) — never an uncontrolled crash either way.
+**Готовность/model_version predictor'а имеют runtime-проверяемый
+контракт типов**, а не просто типовую подсказку: `is_ready()` обязан
+вернуть ровно `bool` (truthy-строка или `1` отклоняются, а не
+приводятся к типу), а после готовности `model_version()` обязан вернуть
+непустую `str`. Predictor, нарушающий это, трактуется как "не готов" для
+`/ready` (`503`) и как невалидный output для `/predict` (`500`) — никогда
+как неконтролируемое падение.
 
-**422 responses are sanitized**, on two axes. FastAPI's default validation
-error body includes the offending `input` value verbatim, which would echo
-request data (including `context`) straight back to the client — this
-service's handler returns only `{"detail": [{"loc": [...], "msg": "...",
-"type": "..."}]}`. Additionally, `loc` itself is sanitized: an unknown,
-client-supplied field name (e.g. a bogus top-level key) is itself request
-data, so any `loc` segment that isn't one of this schema's known field names
-(`prediction_time`, `horizon_minutes`, `vehicles`, `vehicle_id`, `context`)
-or a structural marker/list index is replaced with `<field>`.
+**Ответы `422` санитизированы по двум осям.** Стандартное тело ошибки
+валидации FastAPI включает исходное значение `input` целиком, что
+эхом вернуло бы данные запроса (включая `context`) обратно клиенту — наш
+обработчик возвращает только `{"detail": [{"loc": [...], "msg": "...",
+"type": "..."}]}`. Дополнительно санитизируется само `loc`: неизвестное,
+заданное клиентом имя поля (например, произвольный лишний top-level ключ)
+— тоже данные запроса, поэтому любой сегмент `loc`, который не входит в
+известные имена полей этой схемы (`prediction_time`, `horizon_minutes`,
+`vehicles`, `vehicle_id`, `context`) и не является структурным
+маркером/индексом списка, заменяется на `<field>`.
 
-**Server-side logs never carry request content or exception messages.**
-Nothing sent to the client, and nothing written to logs, includes a stack
-trace, an internal file path, an exception's message, or an echo of the
-request's `context` — a predictor exception's message could itself be
-derived from request data. Logs record only metadata: batch size, model
-version, error *type* (e.g. `RuntimeError`), and success/failure.
+**Server-side логи никогда не несут содержимое запроса или сообщения
+исключений.** Ничто, отправленное клиенту, и ничто, записанное в логи, не
+содержит стек вызовов, внутренний путь файла, сообщение исключения или
+эхо `context` запроса — сообщение исключения predictor'а само может быть
+производным от данных запроса. В логах — только метаданные: размер
+батча, версия модели, *тип* ошибки (например, `RuntimeError`),
+успех/неудача.
 
 ## 7. Health / readiness
 
-- `GET /health` — always `200 {"status": "ok"}` if the process is up. Does
-  not check the predictor, the organizer emulator, or any database.
-- `GET /ready` — `200 {"ready": true, "model_version": "..."}` when the
-  predictor can serve inference, otherwise `503 {"ready": false,
-  "model_version": null}`. This also covers the predictor's readiness or
-  `model_version` check itself raising — that is treated as "not ready"
-  (`503`), never an uncontrolled `500`; only the exception type is logged.
-  `MockPredictor` is always ready.
+- `GET /health` — всегда `200 {"status": "ok"}`, если процесс жив. Не
+  проверяет predictor, организаторский эмулятор или какую-либо БД.
+- `GET /ready` — `200 {"ready": true, "model_version": "..."}`, когда
+  predictor может обслуживать инференс, иначе `503 {"ready": false,
+  "model_version": null}`. Это распространяется и на случай, когда сама
+  проверка готовности или `model_version` падает — это трактуется как
+  "не готов" (`503`), никогда как неконтролируемый `500`; в лог пишется
+  только тип исключения. `MockPredictor` всегда готов.
 
-## 8. Explicit TBD after organizer release
+## 8. Явный TBD после публикации организаторами
 
-- The real shape of `context` (replacing the opaque object with typed
-  fields once the CSV ↔ emulator mapping exists).
-- Exact `delay`/target semantics, unit, and `horizon_minutes` semantics.
-- Whether a maximum batch size is needed (depends on the emulator).
-- The real predictor (artifact-backed, replacing `MockPredictor`).
-- `target_name` / `target_unit` concrete values.
+- Реальная форма `context` (замена непрозрачного объекта типизированными
+  полями, как только появится mapping CSV ↔ emulator).
+- Точная семантика `delay`/target и его единица измерения.
+- Официальная семантика horizon у организаторов: обязателен ли, какое
+  значение, и совпадает ли с provisional `horizon_minutes` (текущее
+  provisional-поле уже трактуется в минутах — это факт нашего API, а не
+  организаторов, см. §4).
+- Нужен ли максимальный размер батча (зависит от эмулятора).
+- Реальный predictor (artifact-backed, заменяющий `MockPredictor`).
+- Конкретные значения `target_name`/`target_unit`.
 
-## 9. What backend owns
+## 9. Что владеет backend
 
-Telemetry ingestion, `VehicleState`, recent telemetry window,
-`PredictionScheduler`, `PredictionService`, the ML Client that calls this
-API, risk rules/alerts, WebSocket/REST to the frontend, PostgreSQL. See
-`docs/ARCHITECTURE.md` §5.
+Приём телеметрии, `VehicleState`, окно недавней телеметрии,
+`PredictionScheduler`, `PredictionService`, ML Client, вызывающий этот
+API, risk rules/alerts, WebSocket/REST к frontend'у, PostgreSQL. См.
+[`ARCHITECTURE.md`](ARCHITECTURE.md) §5.
 
-## 10. What Python ML owns
+## 10. Что владеет Python ML
 
-This HTTP service, the `Predictor` boundary, feature logic (once it exists),
-model training/inference, artifact metadata/bundle. Stateless across
-requests — no per-vehicle history is stored here; recent telemetry, if
-needed, travels in the request itself.
+Этот HTTP-сервис, граница `Predictor`, feature-логика (как появится),
+обучение/инференс модели, метаданные/bundle артефакта. Не хранит
+operational-состояние между запросами — история по vehicle здесь не
+хранится, недавняя телеметрия, если нужна, едет прямо в запросе. Это не
+запрещает predictor'у держать в памяти загруженный model-артефакт,
+статичные lookup-данные или объекты препроцессинга между запросами —
+это ожидаемая часть обычного inference-сервиса, а не operational-состояние
+конкретного запроса/vehicle.
 
-## 11. Example curl request
+## 11. Пример curl-запроса
 
 ```bash
 curl -s -X POST http://127.0.0.1:8000/api/v1/predict/batch \
@@ -231,7 +257,7 @@ curl -s -X POST http://127.0.0.1:8000/api/v1/predict/batch \
   }'
 ```
 
-## 12. Example response
+## 12. Пример ответа
 
 ```json
 {

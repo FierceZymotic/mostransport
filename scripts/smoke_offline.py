@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""End-to-end smoke test for the offline pipeline skeleton.
+"""End-to-end smoke test для offline-пайплайна.
 
-Builds a small synthetic dataframe (no organizer data involved), then runs it
-through: temporal split -> median baseline fit -> predict -> MAE. This only
-checks that the offline infrastructure is wired together and executable, not
-that any real model is good.
+Строит маленький синтетический dataframe (без организаторских данных),
+затем прогоняет его через: temporal split -> median baseline fit ->
+predict -> MAE. Проверяет только то, что offline-инфраструктура собрана
+вместе и исполняема — не то, что какая-либо реальная модель хороша.
 
-Usage:
+Запуск:
     uv run python scripts/smoke_offline.py
 """
 

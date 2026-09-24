@@ -1,9 +1,9 @@
-"""Strict temporal (chronological) train/validation/test split.
+"""Строгий temporal (хронологический) train/validation/test split.
 
-No random splitting anywhere in this module — for early-delay prediction,
-getting the chronology right matters more than almost anything else in the
-evaluation setup. Purge/embargo windows and walk-forward CV are deliberately
-out of scope until the real target/horizon are known (see docs/ARCHITECTURE.md).
+Никакого random split нигде в этом модуле — для раннего прогнозирования
+задержек правильная хронология важнее почти всего остального в схеме
+оценки. Purge/embargo-окна и walk-forward CV намеренно вне scope, пока не
+станут известны реальные target/horizon (см. docs/ARCHITECTURE.md).
 """
 
 from __future__ import annotations
@@ -27,30 +27,31 @@ def split_by_time_boundaries(
     train_end: Any,
     validation_end: Any,
 ) -> TemporalSplit:
-    """Split `dataframe` chronologically into train/validation/test.
+    """Разбить `dataframe` хронологически на train/validation/test.
 
     - train: time_column < train_end
     - validation: train_end <= time_column < validation_end
     - test: time_column >= validation_end
 
-    Parameters
-    ----------
+    Параметры
+    ---------
     dataframe:
-        Input data. Does not need to be pre-sorted.
+        Входные данные. Не обязаны быть заранее отсортированы.
     time_column:
-        Name of the column to split on. Must be present and parseable as a
-        datetime (or already be one).
+        Имя колонки, по которой делается split. Обязана присутствовать и
+        парситься как datetime (либо уже быть им).
     train_end, validation_end:
-        Boundary timestamps (anything `pandas.Timestamp` accepts). Must
-        satisfy train_end < validation_end.
+        Границы-timestamp'ы (подходит всё, что принимает
+        `pandas.Timestamp`). Обязано выполняться train_end < validation_end.
 
-    Raises
-    ------
+    Исключения
+    ----------
     KeyError
-        If `time_column` is not present in `dataframe`.
+        Если `time_column` отсутствует в `dataframe`.
     ValueError
-        If boundaries are invalid or ordered wrong, or timezone-awareness is
-        inconsistent between the boundaries and/or the time column.
+        Если границы невалидны или заданы в неверном порядке, либо
+        timezone-awareness несогласована между границами и/или колонкой
+        времени.
     """
     if time_column not in dataframe.columns:
         raise KeyError(

@@ -1,9 +1,9 @@
-"""Stable metadata representation for a prediction target.
+"""Стабильное метаданное представление prediction target.
 
-The organizers have confirmed the primary metric (MAE) but not yet the exact
-delay definition, units, or horizon. `TargetSpec` gives experiments and logs
-a stable place to *describe* a target once one exists — it intentionally
-does not construct one.
+Организаторы подтвердили primary-метрику (MAE), но пока не точное
+определение delay, единицы измерения или horizon. `TargetSpec` даёт
+экспериментам и логам стабильное место, чтобы *описать* target, когда он
+появится — намеренно не строит его сам.
 """
 
 from __future__ import annotations
@@ -14,10 +14,10 @@ from typing import Any
 
 @dataclass(frozen=True)
 class TargetSpec:
-    """Metadata describing a prediction target.
+    """Метаданные, описывающие prediction target.
 
-    Nothing is hardcoded: name, unit, and horizon are all supplied by the
-    caller once the organizer's task specification is known.
+    Ничего не захардкожено: name, unit и horizon задаёт вызывающий, как
+    только станет известен task specification организатора.
     """
 
     name: str

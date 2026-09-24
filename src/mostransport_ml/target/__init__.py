@@ -1,6 +1,6 @@
-"""Target metadata representation.
+"""Метаданное представление target.
 
-Target *construction* is deliberately not implemented here — the real delay
-semantics and horizon are unknown until the full task specification is
-released. See `spec.py` and docs/ARCHITECTURE.md.
+Само *построение* target здесь намеренно не реализовано — реальная
+семантика delay и horizon неизвестна до публикации полного task spec. См.
+`spec.py` и docs/ARCHITECTURE.md.
 """

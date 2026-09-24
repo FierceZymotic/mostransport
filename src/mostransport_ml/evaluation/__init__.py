@@ -1,5 +1,5 @@
-"""Metrics, temporal splitting, and a constant baseline.
+"""Метрики, temporal split и константный baseline.
 
-This is the core of the fz-owned "data → target → evaluation correctness"
-responsibility. See docs/ARCHITECTURE.md.
+Это ядро ответственности fz "data → target → evaluation correctness". См.
+docs/ARCHITECTURE.md.
 """

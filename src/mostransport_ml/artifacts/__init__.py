@@ -1,10 +1,11 @@
-"""ML artifact bundle — not yet implemented; `metadata.py` is the exception.
+"""ML artifact bundle — ещё не реализован; `metadata.py` — исключение.
 
-`metadata.ArtifactMetadata` is a minimal, stable metadata shape (model
-version, target info, optional validation MAE). It is deliberately not an
-artifact loader: no `.cbm`/joblib/preprocessing loading exists here, because
-the real model format is unknown until a real model exists.
+`metadata.ArtifactMetadata` — минимальная, стабильная форма метаданных
+(версия модели, информация о target, опциональный validation MAE). Это
+намеренно не artifact loader: здесь нет загрузки `.cbm`/joblib/
+preprocessing, потому что реальный формат модели неизвестен, пока не
+появится реальная модель.
 
-Owned by Valeria. See docs/ARCHITECTURE.md §7 for the expected shape of a
-full artifact bundle once a real model pipeline exists.
+Владелец — Valeria. Ожидаемая форма полноценного artifact bundle, когда
+появится реальный model pipeline — docs/ARCHITECTURE.md §7.
 """

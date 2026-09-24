@@ -22,8 +22,8 @@ serving = [
     "fastapi>=0.115",
     "uvicorn>=0.30",
     "pydantic>=2.7",
-    # starlette.testclient (used by fastapi.testclient in our serving tests)
-    # prefers httpx2 over httpx and warns when only httpx is installed.
+    # starlette.testclient (используется fastapi.testclient в наших serving-тестах)
+    # предпочитает httpx2 вместо httpx и выдаёт warning, если установлен только httpx.
     "httpx2>=2.0",
 ]
 

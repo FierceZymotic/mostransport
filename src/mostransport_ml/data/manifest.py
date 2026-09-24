@@ -1,10 +1,11 @@
-"""Dataset manifest: reproducibility metadata, never raw row data.
+"""Dataset manifest: метаданные воспроизводимости, никогда не сырые строки.
 
-A `DatasetManifest` records what a dataset *is* so an experiment can point at
-it and be reproduced later. Each source file carries its own schema/row
-count/time range — files are not assumed to share a schema, since organizers
-may ship several CSVs with different shapes (e.g. telemetry.csv alongside
-schedule.csv). The manifest intentionally never stores actual row contents.
+`DatasetManifest` фиксирует, чем *является* датасет, чтобы на него можно
+было сослаться из эксперимента и позже воспроизвести. Каждый source-файл
+несёт свою собственную схему/row count/time range — файлы не считаются
+имеющими общую схему, поскольку организаторы могут выдать несколько CSV
+разной формы (например, telemetry.csv рядом со schedule.csv). Manifest
+намеренно никогда не хранит реальное содержимое строк.
 """
 
 from __future__ import annotations
@@ -27,10 +28,10 @@ def _sha256_of_file(path: Path, chunk_size: int = 1024 * 1024) -> str:
 
 @dataclass(frozen=True)
 class SourceFile:
-    """Reproducibility metadata for a single source file.
+    """Метаданные воспроизводимости для одного source-файла.
 
-    Schema, row count, and time range describe THIS file only — they are
-    never assumed to apply to other files in the same dataset version.
+    Схема, row count и time range описывают ИМЕННО ЭТОТ файл — никогда не
+    считается, что они применимы к другим файлам той же версии датасета.
     """
 
     path: str
@@ -71,12 +72,12 @@ class SourceFile:
 
 @dataclass(frozen=True)
 class DatasetManifest:
-    """Reproducibility metadata for a dataset version.
+    """Метаданные воспроизводимости для версии датасета.
 
-    Dataset-level: a version `label` and a creation timestamp. Everything
-    schema-shaped (columns, dtypes, row count, time range) lives per-file on
-    `source_files`, since a dataset version can bundle files with different
-    schemas.
+    На уровне датасета: `label` версии и время создания. Всё, что связано
+    со схемой (колонки, dtypes, row count, time range), живёт по-файлово
+    в `source_files`, поскольку версия датасета может объединять файлы с
+    разными схемами.
     """
 
     label: str
@@ -154,28 +155,31 @@ def build_manifest(
     count_rows: bool = True,
     time_column: str | None = None,
 ) -> DatasetManifest:
-    """Build a `DatasetManifest` from one or more CSV files.
+    """Построить `DatasetManifest` из одного или нескольких CSV-файлов.
 
-    Each file gets its own schema/row-count/time-range metadata — files are
-    not required to share a schema. Only metadata is retained persistently
-    (size, hash, schema, optional row count / time range); the manifest never
-    stores row data.
+    Каждый файл получает свои собственные метаданные схемы/row-count/
+    time-range — файлы не обязаны иметь общую схему. Персистентно
+    сохраняются только метаданные (размер, hash, схема, опциональный row
+    count / time range); manifest никогда не хранит данные строк.
 
-    Parameters
-    ----------
+    Параметры
+    ---------
     paths:
-        One CSV path, or a list of CSV paths belonging to the same dataset
-        version. They may have different schemas.
+        Один путь к CSV либо список путей, относящихся к одной версии
+        датасета. Они могут иметь разные схемы.
     label:
-        A short human-assigned version label (e.g. "organizer-2026-09-23").
+        Короткий человекочитаемый label версии (например,
+        "organizer-2026-09-23").
     count_rows:
-        Whether to load each file fully to compute an exact row count.
-        Set False to skip this for very large files.
+        Загружать ли каждый файл целиком, чтобы посчитать точный row
+        count. Установите False, чтобы пропустить это для очень больших
+        файлов.
     time_column:
-        Optional column name to additionally record the min/max range of,
-        applied to whichever files actually contain it. Never inferred —
-        must be explicitly supplied by the caller. Raises if none of the
-        given files contain it at all.
+        Опциональное имя колонки, для которой дополнительно записать
+        min/max диапазон — применяется к тем файлам, где она реально
+        есть. Никогда не выводится автоматически — должно быть явно
+        задано вызывающим. Бросает исключение, если ни один из файлов её
+        не содержит.
     """
     path_list = [Path(paths)] if isinstance(paths, str | Path) else [Path(p) for p in paths]
     for p in path_list:

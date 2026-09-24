@@ -1,6 +1,6 @@
-"""OpenAPI must match the actual runtime contract — this is what Andrey's
-backend would use as the integration contract. These check specific
-sections of the published schema, not a full snapshot.
+"""OpenAPI обязан совпадать с реальным runtime-контрактом — это именно то,
+что backend Андрея использовал бы как интеграционный контракт. Проверяют
+конкретные секции опубликованной схемы, а не полный snapshot.
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ def _openapi() -> dict:
 
 
 def _resolve_schema(spec: dict, schema: dict) -> dict:
-    """Follow one `$ref` (if present) into `components/schemas`."""
+    """Развернуть один `$ref` (если есть) внутрь `components/schemas`."""
     if "$ref" in schema:
         name = schema["$ref"].rsplit("/", 1)[-1]
         return spec["components"]["schemas"][name]
@@ -100,9 +100,9 @@ def test_predict_500_and_503_use_generic_error_response():
 
 
 def test_no_default_fastapi_validation_error_schema_is_published():
-    """The custom 422 handler fully replaces FastAPI's default
-    HTTPValidationError/ValidationError components — they must not appear
-    at all, since they would advertise the unsanitized `input`/`ctx` shape."""
+    """Кастомный обработчик 422 полностью заменяет стандартные компоненты
+    FastAPI HTTPValidationError/ValidationError — они не должны появляться
+    вообще, поскольку рекламировали бы несанитизированную форму `input`/`ctx`."""
     spec = _openapi()
     schema_names = set(spec["components"]["schemas"].keys())
     assert "HTTPValidationError" not in schema_names

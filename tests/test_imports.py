@@ -1,5 +1,5 @@
-"""Every module should import cleanly, including the not-yet-implemented
-placeholder packages reserved for Valeria's later work."""
+"""Каждый модуль должен чисто импортироваться, включая ещё не реализованные
+пакеты-заглушки, зарезервированные под будущую работу Valeria."""
 
 import importlib
 

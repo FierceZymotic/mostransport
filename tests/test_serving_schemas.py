@@ -1,10 +1,10 @@
-"""Schema-level invariant tests: status <-> predicted_delay, horizon bounds.
+"""Тесты инвариантов на уровне схемы: status <-> predicted_delay, границы horizon.
 
-These construct Pydantic models directly (no HTTP layer) for fast,
-deterministic coverage of the invariants declared in `serving/schemas.py`.
-See `tests/test_serving_prediction.py` for the HTTP-level counterparts,
-including cases (NaN/Infinity in raw request JSON) where the client-level
-and HTTP-level behavior genuinely differ.
+Конструируют Pydantic-модели напрямую (без HTTP-слоя) — быстрое,
+детерминированное покрытие инвариантов, заданных в `serving/schemas.py`.
+HTTP-level аналоги — в `tests/test_serving_prediction.py`, включая
+случаи (NaN/Infinity в сыром JSON запроса), где поведение на уровне
+клиента и на уровне HTTP по-настоящему различается.
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ def _base_request(**overrides):
     return payload
 
 
-# --- status <-> predicted_delay invariant ------------------------------------
+# --- инвариант status <-> predicted_delay ------------------------------------
 
 
 def test_ok_with_finite_delay_is_valid():
@@ -77,7 +77,7 @@ def test_ok_with_infinite_delay_is_rejected():
         VehiclePrediction(vehicle_id="x", predicted_delay=float("inf"), status=PredictionStatus.OK)
 
 
-# --- horizon_minutes: None, or finite and > 0 --------------------------------
+# --- horizon_minutes: None, либо конечное и > 0 -------------------------------
 
 
 def test_horizon_none_is_valid():

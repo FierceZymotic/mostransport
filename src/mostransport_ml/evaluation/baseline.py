@@ -1,7 +1,7 @@
-"""Simple constant baseline: predict the median training-set target value.
+"""Простой константный baseline: предсказывает медиану target на train.
 
-Gives an honest baseline MAE within the first hour after the target exists,
-well before any real feature engineering or modeling is in place.
+Даёт честный baseline MAE в первый час после появления target, задолго
+до того, как появится реальный feature engineering или модель.
 """
 
 from __future__ import annotations
@@ -12,7 +12,7 @@ import numpy as np
 
 
 class MedianBaselineRegressor:
-    """Predicts the median of `y` seen during `fit`, ignoring `X` entirely."""
+    """Предсказывает медиану `y`, увиденную во время `fit`, полностью игнорируя `X`."""
 
     def __init__(self) -> None:
         self.median_: float | None = None

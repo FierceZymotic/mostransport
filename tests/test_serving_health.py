@@ -1,4 +1,4 @@
-"""Tests for GET /health, GET /ready, and basic OpenAPI shape."""
+"""Тесты для GET /health, GET /ready и базовой формы OpenAPI."""
 
 from __future__ import annotations
 
@@ -12,7 +12,7 @@ from mostransport_ml.serving.schemas import PredictionBatchRequest
 
 
 class _NotReadyPredictor:
-    """Fake predictor that is never ready, to exercise /ready's 503 path."""
+    """Fake predictor, никогда не готовый — проверка пути /ready на 503."""
 
     def is_ready(self) -> bool:
         return False
@@ -25,7 +25,7 @@ class _NotReadyPredictor:
 
 
 class _ReadyCheckRaisesPredictor:
-    """Fake predictor whose `is_ready()` itself raises."""
+    """Fake predictor, у которого сам `is_ready()` бросает исключение."""
 
     def __init__(self, secret: str) -> None:
         self._secret = secret
@@ -41,7 +41,7 @@ class _ReadyCheckRaisesPredictor:
 
 
 class _ModelVersionRaisesPredictor:
-    """Fake predictor that reports ready but whose `model_version()` raises."""
+    """Fake predictor, сообщающий о готовности, но с `model_version()`, бросающим исключение."""
 
     def __init__(self, secret: str) -> None:
         self._secret = secret
@@ -57,8 +57,8 @@ class _ModelVersionRaisesPredictor:
 
 
 class _NonBoolReadyPredictor:
-    """Fake predictor whose `is_ready()` returns something other than `bool`
-    — e.g. a truthy string, which `bool(...)` would silently accept."""
+    """Fake predictor, у которого `is_ready()` возвращает не `bool` —
+    например, truthy-строку, которую `bool(...)` молча принял бы."""
 
     def __init__(self, value: object) -> None:
         self._value = value
@@ -74,8 +74,8 @@ class _NonBoolReadyPredictor:
 
 
 class _InvalidModelVersionPredictor:
-    """Fake predictor that reports ready but whose `model_version()` returns
-    something other than a non-empty `str`."""
+    """Fake predictor, сообщающий о готовности, но с `model_version()`,
+    возвращающим не непустую `str`."""
 
     def __init__(self, value: object) -> None:
         self._value = value
@@ -142,13 +142,13 @@ def test_ready_returns_503_when_model_version_raises(caplog):
     assert secret not in caplog.text
 
 
-# --- runtime predictor contract: is_ready() must be exactly bool,
-# model_version() must be a non-empty str when ready ------------------------
+# --- runtime-контракт predictor'а: is_ready() обязан быть ровно bool,
+# model_version() при готовности обязан быть непустой str -------------------
 
 
 def test_is_ready_string_false_is_rejected_not_treated_as_ready():
-    """A truthy string like "false" must not be silently accepted via
-    `bool(...)` — that would make /ready say "ready" while nothing backs it."""
+    """Truthy-строка вроде "false" не должна молча приниматься через
+    `bool(...)` — иначе /ready сказал бы "готов", хотя за этим ничего нет."""
     client = TestClient(create_app(_NonBoolReadyPredictor("false")))
     response = client.get("/ready")
     assert response.status_code == 503
@@ -201,9 +201,9 @@ def test_model_version_valid_non_empty_string_works():
 
 
 def test_invalid_predictor_contract_secret_absent_from_response_and_logs(caplog):
-    """Even the invalid VALUE a broken predictor returns must not leak — the
-    contract-violation exception message embeds it, but only the exception
-    TYPE is ever logged, never its message."""
+    """Даже невалидное ЗНАЧЕНИЕ, которое возвращает сломанный predictor, не
+    должно утечь — сообщение исключения о нарушении контракта содержит его,
+    но логируется только ТИП исключения, никогда не его сообщение."""
     secret = "SECRET_READY_VALUE_999"
     client = TestClient(create_app(_NonBoolReadyPredictor(secret)))
 

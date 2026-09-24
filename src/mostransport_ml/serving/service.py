@@ -1,18 +1,19 @@
-"""Inference orchestration and the replaceable Predictor boundary.
+"""Inference orchestration и заменяемая граница Predictor.
 
     FastAPI endpoint -> InferenceService -> Predictor -> prediction results
 
-`InferenceService` owns no transport-specific logic and no per-vehicle
-history — it validates readiness, calls the predictor, and turns raw output
-into a strictly-validated response. `Predictor` is the seam a future
-artifact-backed implementation plugs into without touching the FastAPI layer
-or endpoint code (see `mock.py` for the only implementation that exists
-today).
+`InferenceService` не владеет никакой transport-specific логикой и
+никакой историей по vehicle — она проверяет readiness, вызывает
+predictor и превращает сырой output в строго провалидированный ответ.
+`Predictor` — та точка, куда будущая artifact-backed реализация
+подключится, не трогая FastAPI-слой или код эндпоинтов (см. `mock.py` —
+единственную реализацию, существующую сегодня).
 
-Two things a `Predictor` implementation must never be able to do, even by
-accident: mutate the request it was handed, or lie about its own
-readiness/model_version type. Both are enforced here, not merely documented
-— see `_RequestSnapshot` and the validation in `is_ready`/`model_version`.
+Есть две вещи, которые реализация `Predictor` никогда не должна суметь
+сделать, даже случайно: мутировать переданный ей request, либо соврать о
+типе своей готовности/model_version. Обе проверяются здесь именно в
+рантайме, а не просто описаны в документации — см. `_RequestSnapshot` и
+валидацию в `is_ready`/`model_version`.
 """
 
 from __future__ import annotations
@@ -30,28 +31,29 @@ from mostransport_ml.serving.schemas import (
 
 
 class PredictorNotReadyError(RuntimeError):
-    """Raised when inference is requested before the predictor is ready."""
+    """Бросается, когда инференс запрошен до готовности predictor'а."""
 
 
 class PredictorContractError(RuntimeError):
-    """Raised when a predictor violates its contract with `InferenceService`:
-    wrong prediction count, wrong order, a `vehicle_id` that doesn't match
-    the input at that position, mutation of the request it was handed, or an
-    `is_ready`/`model_version` return value of the wrong type or shape. The
-    predictor must satisfy this contract itself — this is fail-fast
-    detection, not silent correction (no re-sorting, no mapping by id, no
-    coercion of a truthy/falsy value into a bool)."""
+    """Бросается, когда predictor нарушает свой контракт с
+    `InferenceService`: неверное число predictions, неверный порядок,
+    `vehicle_id`, не совпадающий со входом на этой позиции, мутация
+    переданного ему request, либо возвращаемое значение `is_ready`/
+    `model_version` неверного типа или формы. Predictor обязан
+    самостоятельно соблюдать этот контракт — это fail-fast обнаружение, а
+    не тихое исправление (никакой пересортировки, никакого маппинга по
+    id, никакого приведения truthy/falsy значения к bool)."""
 
 
 @dataclass(frozen=True)
 class _RequestSnapshot:
-    """Immutable snapshot of the request fields the serving contract depends
-    on, taken before the predictor runs.
+    """Неизменяемый снимок полей request'а, от которых зависит serving
+    contract, снятый до запуска predictor'а.
 
-    Deliberately narrow: this is not a deep copy of the whole request (no
-    duplicating `context` payloads) — only the fields needed to detect a
-    predictor mutating the envelope out from under `InferenceService`, and
-    to build the response from values a predictor can't have touched.
+    Намеренно узкий: это не deep copy всего request'а (без дублирования
+    payload'ов `context`) — только поля, нужные, чтобы обнаружить, что
+    predictor подменил конверт из-под `InferenceService`, и чтобы строить
+    ответ из значений, которых predictor не мог коснуться.
     """
 
     prediction_time: datetime
@@ -73,12 +75,13 @@ class _RequestSnapshot:
 
 @dataclass(frozen=True)
 class RawPrediction:
-    """What a `Predictor` returns for one vehicle, before response validation.
+    """То, что `Predictor` возвращает для одного vehicle, до валидации ответа.
 
-    Deliberately not validated on construction — `InferenceService` is
-    responsible for turning this into a strictly-validated `VehiclePrediction`
-    (finite `predicted_delay` or None), so a buggy predictor can't put a
-    malformed value directly on the wire.
+    Намеренно не валидируется при конструировании — превратить это в
+    строго провалидированный `VehiclePrediction` (конечный
+    `predicted_delay` либо None) обязана `InferenceService`, чтобы
+    сломанный predictor не мог напрямую отправить в ответ некорректное
+    значение.
     """
 
     vehicle_id: str
@@ -87,51 +90,52 @@ class RawPrediction:
 
 
 class Predictor(Protocol):
-    """Minimal, replaceable boundary between serving and a model implementation.
+    """Минимальная, заменяемая граница между serving и реализацией модели.
 
-    Stateless by contract: no method here takes or returns anything tied to
-    a previous request, and `predict_batch` must not mutate the `request` it
-    is given. This boundary is sufficient for mock/pre-hackathon serving; the
-    Artifact Contract sync point (see docs/ARCHITECTURE.md §7) may still
-    extend it once real model metadata semantics exist, but a future
-    artifact-backed predictor is expected to implement these same methods
-    without the FastAPI layer changing.
+    Stateless по контракту: ни один метод здесь не принимает и не
+    возвращает ничего, связанного с предыдущим запросом, а `predict_batch`
+    не должен мутировать переданный ему `request`. Этой границы
+    достаточно для mock/pre-hackathon serving; точка синхронизации
+    Artifact Contract (см. docs/ARCHITECTURE.md §7) может ещё расширить
+    её, когда появится реальная семантика метаданных модели, но от
+    будущего artifact-backed predictor'а ожидается реализация тех же
+    методов без изменения FastAPI-слоя.
 
-    `typing.Protocol` documents this contract but can't enforce it at
-    runtime — `InferenceService` is what actually checks it (see
-    `is_ready`/`model_version` below, and the mutation check in
-    `predict_batch`).
+    `typing.Protocol` документирует этот контракт, но не может проверить
+    его в рантайме — реально проверяет его `InferenceService` (см.
+    `is_ready`/`model_version` ниже и проверку мутации в `predict_batch`).
     """
 
     def is_ready(self) -> bool:
-        """Whether the predictor can currently serve `predict_batch`.
-        Must return exactly `bool` — not merely a truthy/falsy value."""
+        """Может ли predictor сейчас обслуживать `predict_batch`.
+        Обязан вернуть ровно `bool` — не просто truthy/falsy значение."""
         ...
 
     def model_version(self) -> str:
-        """A short, stable, non-empty identifier for the currently loaded
-        model. Only meaningful once `is_ready()` is `True`."""
+        """Короткий, стабильный, непустой идентификатор текущей
+        загруженной модели. Имеет смысл только когда `is_ready()` вернул
+        `True`."""
         ...
 
     def predict_batch(self, request: PredictionBatchRequest) -> list[RawPrediction]:
-        """Return exactly one `RawPrediction` per `request.vehicles`, in
-        order, without mutating `request`."""
+        """Вернуть ровно один `RawPrediction` на каждый `request.vehicles`,
+        в том же порядке, не мутируя `request`."""
         ...
 
 
 class InferenceService:
-    """Validates readiness, calls the predictor, and builds a safe response."""
+    """Проверяет readiness, вызывает predictor и строит безопасный ответ."""
 
     def __init__(self, predictor: Predictor) -> None:
         self._predictor = predictor
 
     def is_ready(self) -> bool:
-        """Runtime-validated readiness.
+        """Readiness, провалидированная в рантайме.
 
-        `typing.Protocol` can't stop a predictor from returning e.g. the
-        string `"false"` (truthy!) or `1` instead of a real `bool` — that
-        would otherwise make `/ready` and `/predict` disagree. Reject
-        anything that isn't exactly `bool` instead of coercing it.
+        `typing.Protocol` не может помешать predictor'у вернуть, например,
+        строку `"false"` (truthy!) или `1` вместо настоящего `bool` — иначе
+        это рассогласовало бы `/ready` и `/predict`. Отклоняем всё, что не
+        является ровно `bool`, вместо того чтобы приводить к типу.
         """
         value = self._predictor.is_ready()
         if type(value) is not bool:
@@ -142,10 +146,11 @@ class InferenceService:
         return value
 
     def model_version(self) -> str:
-        """Runtime-validated model version: a non-empty `str`.
+        """Model version, провалидированная в рантайме: непустая `str`.
 
-        Only call this once the predictor has reported itself ready — a
-        not-ready predictor is not required to have a meaningful version.
+        Вызывать только после того, как predictor сам сообщил о своей
+        готовности — от неготового predictor'а не требуется осмысленная
+        версия.
         """
         value = self._predictor.model_version()
         if not isinstance(value, str) or value == "":
@@ -162,10 +167,10 @@ class InferenceService:
 
         raw_predictions = self._predictor.predict_batch(request)
 
-        # The predictor was handed `request` by reference and could have
-        # mutated it. Re-check every protected field against the snapshot
-        # taken *before* the call — a predictor must never be able to
-        # redefine what "the request" was after the fact.
+        # Predictor'у передали `request` по ссылке, и он мог его
+        # мутировать. Перепроверяем каждое защищённое поле относительно
+        # снимка, снятого *до* вызова — predictor никогда не должен суметь
+        # задним числом переопределить, чем был "request".
         if request.prediction_time != snapshot.prediction_time:
             raise PredictorContractError("predictor mutated request.prediction_time")
         if request.horizon_minutes != snapshot.horizon_minutes:
@@ -181,10 +186,11 @@ class InferenceService:
                 f"{snapshot.vehicle_count} input vehicles"
             )
 
-        # Exact 1:1 identity/order, checked against the ORIGINAL ids (not
-        # whatever `request.vehicles` looks like now) — a predictor that
-        # reorders or swaps IDs must fail loudly here. This never re-sorts
-        # or maps by id to "fix" it.
+        # Точное 1:1 соответствие identity/order, сверяемое с ИСХОДНЫМИ id
+        # (а не с тем, как `request.vehicles` выглядит сейчас) — predictor,
+        # переставивший порядок или подменивший id, обязан здесь громко
+        # упасть. Это никогда не пересортирует и не перемаппит по id, чтобы
+        # "исправить".
         for index, (expected_id, raw) in enumerate(
             zip(snapshot.vehicle_ids, raw_predictions, strict=True)
         ):
@@ -195,9 +201,9 @@ class InferenceService:
                     f"{raw.vehicle_id!r}"
                 )
 
-        # Constructing VehiclePrediction validates finiteness of
-        # predicted_delay; a non-finite predictor output raises here, before
-        # any response is built or sent.
+        # Конструирование VehiclePrediction проверяет конечность
+        # predicted_delay; нефинитный output predictor'а бросит исключение
+        # здесь, до того как ответ будет построен или отправлен.
         predictions = [
             VehiclePrediction(
                 vehicle_id=raw.vehicle_id,
@@ -207,9 +213,9 @@ class InferenceService:
             for raw in raw_predictions
         ]
 
-        # Built from the ORIGINAL snapshot, never from `request` — even if
-        # every check above somehow passed, the response can't carry a
-        # mutated prediction_time/horizon_minutes.
+        # Строится из ИСХОДНОГО снимка, никогда из `request` — даже если бы
+        # каждая проверка выше как-то прошла, ответ не может нести
+        # мутированные prediction_time/horizon_minutes.
         return PredictionBatchResponse(
             prediction_time=snapshot.prediction_time,
             horizon_minutes=snapshot.horizon_minutes,

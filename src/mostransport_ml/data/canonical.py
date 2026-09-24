@@ -1,9 +1,14 @@
-"""Canonicalization boundary: an explicit, caller-supplied rename/validate step.
+"""Canonicalization boundary: явный шаг rename/validate, задаваемый вызывающим.
 
-No canonical field list is hardcoded here. The official CSV schema and the
-emulator schema are not known yet, so this module only provides the
-*mechanism* that will later turn whatever the organizers give us into a
-shared domain representation, once the actual field mapping is known.
+Здесь не захардкожен ни один canonical список полей. Официальная схема
+CSV и схема эмулятора пока не известны, поэтому модуль даёт только
+*механизм*, который позже превратит то, что дадут организаторы, в общее
+доменное представление — как только реальный field mapping станет
+известен.
+
+Важное уточнение (см. docs/PROJECT_KNOWLEDGE.md §10.10): это
+offline-механизм работы с `pandas.DataFrame`, а не обязательный
+runtime-конвертер между backend'ом и Python-сервисом.
 """
 
 from __future__ import annotations
@@ -15,10 +20,10 @@ import pandas as pd
 
 @dataclass(frozen=True)
 class CanonicalMapping:
-    """An explicit rename + required-field contract for one source schema.
+    """Явный контракт rename + required-field для одной source-схемы.
 
-    Nothing is inferred: every renamed column and every required field must
-    be listed explicitly by the caller.
+    Ничего не выводится автоматически: каждая переименовываемая колонка и
+    каждое обязательное поле должны быть явно перечислены вызывающим.
     """
 
     source_name: str
@@ -27,20 +32,21 @@ class CanonicalMapping:
 
 
 def apply_canonical_mapping(df: pd.DataFrame, mapping: CanonicalMapping) -> pd.DataFrame:
-    """Rename columns per `mapping.rename` and validate `required_fields`.
+    """Переименовать колонки по `mapping.rename` и проверить `required_fields`.
 
-    Only explicitly listed columns are renamed. No feature engineering, no
-    type coercion, no fuzzy/inferred column matching. Fails fast on any
-    rename that would make the resulting column set ambiguous.
+    Переименовываются только явно перечисленные колонки. Никакого feature
+    engineering, никакого приведения типов, никакого нечёткого/выведенного
+    сопоставления колонок. Fail-fast на любом rename, который сделал бы
+    итоговый набор колонок неоднозначным.
 
-    Raises
-    ------
+    Исключения
+    ----------
     ValueError
-        If `mapping.rename` references a source column that doesn't exist,
-        if two source columns would rename to the same destination, if a
-        destination name collides with an existing column that isn't itself
-        being renamed away, or if a required field is missing after
-        renaming.
+        Если `mapping.rename` ссылается на несуществующую source-колонку,
+        если две source-колонки переименовываются в одно и то же
+        назначение, если имя назначения совпадает с уже существующей
+        колонкой, которая сама не переименовывается, либо если после
+        переименования отсутствует обязательное поле.
     """
     unknown_sources = set(mapping.rename) - set(df.columns)
     if unknown_sources:
@@ -68,8 +74,8 @@ def apply_canonical_mapping(df: pd.DataFrame, mapping: CanonicalMapping) -> pd.D
             f"the same destination name: {details}"
         )
 
-    # A destination name is only safe if it's not shared with a column that
-    # keeps its original name (columns being renamed away don't count).
+    # Имя назначения безопасно, только если оно не совпадает с колонкой,
+    # сохраняющей своё исходное имя (колонки, переименовываемые прочь, не в счёт).
     unrenamed_columns = set(df.columns) - set(mapping.rename)
     colliding_with_unrenamed = set(mapping.rename.values()) & unrenamed_columns
     if colliding_with_unrenamed:

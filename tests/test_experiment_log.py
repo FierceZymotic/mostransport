@@ -11,7 +11,7 @@ def test_finite_mae_is_logged_as_valid_json(tmp_path):
     logger.log_run(model_name="median-baseline", validation_mae=1.2345)
 
     line = path.read_text().strip()
-    parsed = json.loads(line)  # must parse as standard JSON
+    parsed = json.loads(line)  # обязан парситься как стандартный JSON
     assert parsed["model_name"] == "median-baseline"
     assert parsed["validation_mae"] == pytest.approx(1.2345)
 
