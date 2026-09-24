@@ -1,0 +1,44 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# --- Virtual environment ---
+.venv/
+venv/
+
+# --- Tooling caches ---
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# --- Notebooks ---
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# --- Environment / secrets ---
+.env
+.env.*
+
+# --- Organizer / confidential data: never commit ---
+# Keep the directories and their README/.gitkeep, ignore everything inside.
+data/raw/*
+!data/raw/.gitkeep
+data/interim/*
+!data/interim/.gitkeep
+data/processed/*
+!data/processed/.gitkeep
+
+# --- Generated experiment logs and model artifacts ---
+experiments/*.jsonl
+experiments/*.log
+*.pkl
+*.joblib
+*.cbm
+
+# --- OS / IDE ---
+.DS_Store
+.idea/
