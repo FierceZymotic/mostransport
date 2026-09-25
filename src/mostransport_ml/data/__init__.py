@@ -1,4 +1,6 @@
-"""Generic, domain-agnostic инспекция датасета, manifest и canonicalization.
+"""Инспекция датасета, manifest, canonicalization и official adapter.
 
-Ничто в этом пакете не предполагает конкретную organizer CSV schema.
+`inspection`/`manifest`/`canonical` — generic и не предполагают схему
+организаторов. `official` — безопасный adapter опубликованного официального
+датасета (allowlist колонок, без factual schedule).
 """

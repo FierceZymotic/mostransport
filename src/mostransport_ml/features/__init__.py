@@ -1,6 +1,7 @@
-"""Общий feature engineering — ещё не реализовано.
+"""Point-in-time Feature Builder `tabular-v1` (M1).
 
-Владелец — Valeria. Критический инвариант: offline-обучение и
-online-serving обязаны импортировать *одну и ту же* feature-логику из
-этого пакета, а не держать каждый свою копию. См. docs/ARCHITECTURE.md.
+`builder.build_features()` получает prediction points, telemetry и
+плановый schedule-контекст явно (без чтения файлов), чтобы та же
+feature-логика могла использоваться offline и online. Схема признаков —
+`schema.py`, пространственные helpers — `spatial.py`.
 """

@@ -1,6 +1,5 @@
-"""Метаданное представление target.
+"""Описание target и его обучающие формулировки.
 
-Само *построение* target здесь намеренно не реализовано — реальная
-семантика delay и horizon неизвестна до публикации полного task spec. См.
-`spec.py` и docs/ARCHITECTURE.md.
+Target (`target_delay_s`) берётся из официальной разметки и здесь не
+строится. `spec.py` — метаданные, `formulation.py` — DIRECT/RESIDUAL.
 """

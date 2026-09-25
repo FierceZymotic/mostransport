@@ -9,6 +9,7 @@ dependencies = [
     "pandas>=2.2",
     "scikit-learn>=1.4",
     "pyarrow>=15.0",
+    "catboost>=1.2",
 ]
 
 [project.optional-dependencies]
