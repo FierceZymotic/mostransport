@@ -55,21 +55,18 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
   this.logger.debug(
     `NDTP packet extracted: ${packet.raw.length} bytes`,
   );
-console.log(
-  'Receiver packet.payload length:',
-  packet.payload.length,
-);
 
-const telemetry = this.parser.parse(
-  packet.payload,
-  packet.unitId,
-);
+  if (packet.payload.length !== 123) {
+    this.logger.debug(
+      `Skipping non-telemetry packet: payload=${packet.payload.length} bytes`,
+    );
+    continue;
+  }
 
-this.history.add(telemetry);
+  const telemetry = this.parser.parse(packet.payload, packet.unitId);
+  this.history.add(telemetry);
 
-this.logger.log(
-  `VehicleState: ${JSON.stringify(telemetry)}`,
-);
+  this.logger.log(`VehicleState: ${JSON.stringify(telemetry)}`);
 }
     });
 
