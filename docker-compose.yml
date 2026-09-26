@@ -1,0 +1,74 @@
+name: mostransport
+
+services:
+  # ML serving (owned by ML team). Runs with the integration-only artifact
+  # by default — see docs/DOCKER_COMPOSE.md for how to point it at a real
+  # Artifact Bundle instead. INTEGRATION TEST ONLY predictions until then.
+  ml:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      MOSTRANSPORT_ARTIFACT_DIR: /artifact
+    volumes:
+      - ${ML_ARTIFACT_DIR:-./ml-artifact}:/artifact:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 15s
+
+  backend:
+    build:
+      context: ./backend
+    depends_on:
+      ml:
+        condition: service_healthy
+    ports:
+      - "3000:3000" # REST/WebSocket API for frontend
+      - "9000:9000" # NDTP telemetry ingest (TCP)
+    environment:
+      PORT: 3000
+      TELEMETRY_PORT: 9000
+      ML_SERVICE_URL: http://ml:8000
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_YANDEX_MAPS_API_KEY: ${VITE_YANDEX_MAPS_API_KEY}
+    depends_on:
+      - backend
+    ports:
+      - "8080:80"
+
+  # NDTP telemetry emulator (organizer-provided image, loaded separately —
+  # see docs/DOCKER_COMPOSE.md). Control/config REST API on :18080.
+  emulator:
+    image: ndtp-telemetry-emulator:1.0
+    depends_on:
+      - backend
+    ports:
+      - "18080:18080"
+
+  # One-shot: waits for the emulator's control API and points it at the
+  # backend's NDTP receiver. This is the whole "scheduler" for the emulator
+  # itself — intentionally not a separate always-on service.
+  emulator-init:
+    image: curlimages/curl:8.10.1
+    depends_on:
+      - emulator
+      - backend
+    volumes:
+      - ./docker/emulator-config.json:/emulator-config.json:ro
+    entrypoint: ["sh", "-c"]
+    command:
+      - >
+        until curl -sf http://emulator:18080/api/cells > /dev/null; do sleep 1; done;
+        curl -sf -X POST http://emulator:18080/api/config
+        -H 'Content-Type: application/json'
+        --data @/emulator-config.json
+    restart: "no"
