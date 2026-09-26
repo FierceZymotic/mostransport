@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from mostransport_ml.features.builder import build_features
+from mostransport_ml.features.schema import FEATURE_NAMES, RUNTIME_SAFE_FEATURE_NAMES
 
 
 def _naive_timestamp(value: pd.Timestamp, name: str) -> pd.Timestamp:
@@ -198,3 +199,30 @@ def to_builder_inputs(batch: CanonicalBatch) -> tuple[pd.DataFrame, pd.DataFrame
 def build_features_from_context(batch: CanonicalBatch) -> pd.DataFrame:
     """Единственный путь от канонического контекста к признакам `tabular-v1`."""
     return build_features(*to_builder_inputs(batch))
+
+
+def project_runtime_safe_features(features: pd.DataFrame) -> pd.DataFrame:
+    """Единственная проекция `tabular-v1` (37) → `runtime-safe-v1` (29).
+
+    Вход — таблица признаков канонического builder'а: колонки строго
+    `FEATURE_NAMES` в замороженном порядке, без дублей. Любой дрейф схемы
+    (отсутствующая, лишняя, переставленная или повторённая колонка) —
+    `ValueError`. Проекция только выбирает колонки `RUNTIME_SAFE_FEATURE_NAMES`:
+    ничего не вычисляет, не меняет значения и dtype, не заполняет NaN, сохраняет
+    индекс и не мутирует вход (возвращается новая таблица).
+    """
+    if not isinstance(features, pd.DataFrame):
+        raise TypeError("features must be a pandas DataFrame")
+    columns = features.columns
+    duplicated = sorted(map(str, columns[columns.duplicated()].unique()))
+    if duplicated:
+        raise ValueError(f"tabular-v1 features contain duplicate columns: {duplicated}")
+    missing = [name for name in FEATURE_NAMES if name not in columns]
+    if missing:
+        raise ValueError(f"tabular-v1 features are missing columns: {missing}")
+    unexpected = [name for name in columns if name not in FEATURE_NAMES]
+    if unexpected:
+        raise ValueError(f"tabular-v1 features contain unexpected columns: {unexpected}")
+    if tuple(columns) != FEATURE_NAMES:
+        raise ValueError("tabular-v1 feature columns are not in the frozen FEATURE_NAMES order")
+    return features.loc[:, list(RUNTIME_SAFE_FEATURE_NAMES)].copy()

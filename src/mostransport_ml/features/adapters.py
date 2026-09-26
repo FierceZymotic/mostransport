@@ -80,8 +80,69 @@ def _optional_bool(value: Any) -> bool | None:
     return None if pd.isna(value) else bool(value)
 
 
+def _examples(values: Iterable[Any]) -> list[str]:
+    return sorted(map(str, values))[:5]
+
+
+def _deviation_by_sample_id(
+    sample_ids: pd.Series, override: pd.Series | Mapping[Any, Any]
+) -> dict[Any, float]:
+    """Проверить override текущего отклонения и вернуть `sample_id → value`.
+
+    Сопоставление только по `sample_id`: ровно одно конечное число на каждую
+    точку, без отсутствующих и лишних ключей. Позиционного выравнивания нет.
+    """
+    if isinstance(override, pd.Series):
+        keys, values = override.index.tolist(), override.tolist()
+    elif isinstance(override, Mapping):
+        keys, values = list(override.keys()), list(override.values())
+    else:
+        raise TypeError(
+            "current_deviation_seconds must be a pandas Series or a mapping keyed by sample_id"
+        )
+    if sample_ids.isna().any():
+        raise ValueError("points.sample_id contains missing values")
+    if sample_ids.duplicated().any():
+        raise ValueError(
+            "points.sample_id must be unique to align current_deviation_seconds; duplicated: "
+            f"{_examples(sample_ids[sample_ids.duplicated()].unique())}"
+        )
+    key_index = pd.Index(keys, dtype=object)
+    if key_index.has_duplicates:
+        raise ValueError(
+            "current_deviation_seconds has duplicated sample_id keys: "
+            f"{_examples(key_index[key_index.duplicated()].unique())}"
+        )
+    for value in values:
+        if (
+            isinstance(value, bool | np.bool_)
+            or not isinstance(value, int | float | np.integer | np.floating)
+            or not math.isfinite(value)
+        ):
+            raise ValueError("current_deviation_seconds must contain only finite numbers")
+    lookup = dict(zip(keys, (float(v) for v in values), strict=True))
+    expected = sample_ids.tolist()
+    missing = [s for s in expected if s not in lookup]
+    if missing:
+        raise ValueError(
+            f"current_deviation_seconds is missing {len(missing)} sample_id(s): "
+            f"{_examples(missing)}"
+        )
+    extra = set(lookup) - set(expected)
+    if extra:
+        raise ValueError(
+            f"current_deviation_seconds has {len(extra)} sample_id(s) that are not "
+            f"prediction points: {_examples(extra)}"
+        )
+    return lookup
+
+
 def offline_context(
-    points: pd.DataFrame, telemetry: pd.DataFrame, schedule_plan: pd.DataFrame
+    points: pd.DataFrame,
+    telemetry: pd.DataFrame,
+    schedule_plan: pd.DataFrame,
+    *,
+    current_deviation_seconds: pd.Series | Mapping[Any, Any] | None = None,
 ) -> CanonicalBatch:
     """Официальные offline-кадры (как из `load_official_split`) → `CanonicalBatch`.
 
@@ -89,6 +150,14 @@ def offline_context(
     так же, как в M1; отсутствующий план даёт NaN-координаты и
     `manual_fill=None`. Telemetry передаётся целиком в исходном порядке:
     cutoff `event_time <= T` для каждой точки применяет builder.
+
+    Текущее отклонение точки (`CanonicalPoint.current_deviation_s` → признак
+    `cur_dev_s`) по умолчанию берётся из `points.cur_dev_s`, как в M1.
+    Keyword-only `current_deviation_seconds` явно заменяет его (например
+    point-in-time-safe значениями `data.safe_deviation`): Series или mapping
+    `sample_id → секунды`, сопоставляемые строго по `sample_id`, ровно одно
+    конечное число на точку. В этом режиме `points.cur_dev_s` не читается и
+    не обязателен.
     """
     for frame, name in (
         (points, "points"),
@@ -96,14 +165,22 @@ def offline_context(
         (schedule_plan, "schedule_plan"),
     ):
         _reject_forbidden_columns(frame, name)
-    _require_columns(points, OFFLINE_POINT_COLUMNS, "points")
+    point_columns = OFFLINE_POINT_COLUMNS
+    if current_deviation_seconds is not None:
+        point_columns = tuple(c for c in OFFLINE_POINT_COLUMNS if c != "cur_dev_s")
+    _require_columns(points, point_columns, "points")
     _require_columns(telemetry, OFFLINE_TELEMETRY_COLUMNS, "telemetry")
     _require_columns(schedule_plan, OFFLINE_PLAN_COLUMNS, "schedule_plan")
+    deviation_override = (
+        None
+        if current_deviation_seconds is None
+        else _deviation_by_sample_id(points["sample_id"], current_deviation_seconds)
+    )
 
     plan = schedule_plan[list(OFFLINE_PLAN_COLUMNS)]
     if plan.duplicated(["tt_action_item_id", "tr_id"]).any():
         raise ValueError("schedule_plan has duplicated (tt_action_item_id, tr_id) keys")
-    merged = points[list(OFFLINE_POINT_COLUMNS)].merge(
+    merged = points[list(point_columns)].merge(
         plan,
         left_on=["target_stop_id", "tr_id"],
         right_on=["tt_action_item_id", "tr_id"],
@@ -125,7 +202,11 @@ def offline_context(
                 target_time_begin=pd.Timestamp(row.target_time_begin),
                 target_lon=lon,
                 target_lat=lat,
-                current_deviation_s=row.cur_dev_s,
+                current_deviation_s=(
+                    row.cur_dev_s
+                    if deviation_override is None
+                    else deviation_override[row.sample_id]
+                ),
                 manual_fill=_optional_bool(row.manual_fill),
             )
         )
