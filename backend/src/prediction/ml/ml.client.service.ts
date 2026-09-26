@@ -14,18 +14,25 @@ export class MlClientService {
     'http://localhost:8000';
 
   async predict(
-    request: PredictionRequest,
-  ): Promise<PredictionResponse> {
-    const response = await fetch(
-      `${this.baseUrl}/api/v1/predict`,
-      {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify(request),
+  request: PredictionRequest,
+): Promise<PredictionResponse> {
+  console.log(
+    'ML REQUEST:',
+    JSON.stringify(request, null, 2),
+  );
+
+  const response = await fetch(
+    `${this.baseUrl}/api/v1/predict`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
       },
-    );
+      body: JSON.stringify(request),
+    },
+  );
+
+  
 
     if (!response.ok) {
       const body = await response.text();

@@ -28,18 +28,21 @@ export type Schedule_actionsMinAggregateOutputType = {
   tt_action_item_id: string | null
   tr_id: string | null
   time_begin: Date | null
+  time_fact_begin: Date | null
 }
 
 export type Schedule_actionsMaxAggregateOutputType = {
   tt_action_item_id: string | null
   tr_id: string | null
   time_begin: Date | null
+  time_fact_begin: Date | null
 }
 
 export type Schedule_actionsCountAggregateOutputType = {
   tt_action_item_id: number
   tr_id: number
   time_begin: number
+  time_fact_begin: number
   manual_fill: number
   _all: number
 }
@@ -49,18 +52,21 @@ export type Schedule_actionsMinAggregateInputType = {
   tt_action_item_id?: true
   tr_id?: true
   time_begin?: true
+  time_fact_begin?: true
 }
 
 export type Schedule_actionsMaxAggregateInputType = {
   tt_action_item_id?: true
   tr_id?: true
   time_begin?: true
+  time_fact_begin?: true
 }
 
 export type Schedule_actionsCountAggregateInputType = {
   tt_action_item_id?: true
   tr_id?: true
   time_begin?: true
+  time_fact_begin?: true
   manual_fill?: true
   _all?: true
 }
@@ -141,6 +147,7 @@ export type Schedule_actionsGroupByOutputType = {
   tt_action_item_id: string
   tr_id: string
   time_begin: Date
+  time_fact_begin: Date | null
   manual_fill: runtime.JsonValue | null
   _count: Schedule_actionsCountAggregateOutputType | null
   _min: Schedule_actionsMinAggregateOutputType | null
@@ -169,6 +176,7 @@ export type schedule_actionsWhereInput = {
   tt_action_item_id?: Prisma.StringFilter<"schedule_actions"> | string
   tr_id?: Prisma.StringFilter<"schedule_actions"> | string
   time_begin?: Prisma.DateTimeFilter<"schedule_actions"> | Date | string
+  time_fact_begin?: Prisma.DateTimeNullableFilter<"schedule_actions"> | Date | string | null
   manual_fill?: Prisma.JsonNullableFilter<"schedule_actions">
 }
 
@@ -176,6 +184,7 @@ export type schedule_actionsOrderByWithRelationInput = {
   tt_action_item_id?: Prisma.SortOrder
   tr_id?: Prisma.SortOrder
   time_begin?: Prisma.SortOrder
+  time_fact_begin?: Prisma.SortOrderInput | Prisma.SortOrder
   manual_fill?: Prisma.SortOrderInput | Prisma.SortOrder
 }
 
@@ -186,6 +195,7 @@ export type schedule_actionsWhereUniqueInput = Prisma.AtLeast<{
   NOT?: Prisma.schedule_actionsWhereInput | Prisma.schedule_actionsWhereInput[]
   tr_id?: Prisma.StringFilter<"schedule_actions"> | string
   time_begin?: Prisma.DateTimeFilter<"schedule_actions"> | Date | string
+  time_fact_begin?: Prisma.DateTimeNullableFilter<"schedule_actions"> | Date | string | null
   manual_fill?: Prisma.JsonNullableFilter<"schedule_actions">
 }, "tt_action_item_id">
 
@@ -193,6 +203,7 @@ export type schedule_actionsOrderByWithAggregationInput = {
   tt_action_item_id?: Prisma.SortOrder
   tr_id?: Prisma.SortOrder
   time_begin?: Prisma.SortOrder
+  time_fact_begin?: Prisma.SortOrderInput | Prisma.SortOrder
   manual_fill?: Prisma.SortOrderInput | Prisma.SortOrder
   _count?: Prisma.schedule_actionsCountOrderByAggregateInput
   _max?: Prisma.schedule_actionsMaxOrderByAggregateInput
@@ -206,6 +217,7 @@ export type schedule_actionsScalarWhereWithAggregatesInput = {
   tt_action_item_id?: Prisma.StringWithAggregatesFilter<"schedule_actions"> | string
   tr_id?: Prisma.StringWithAggregatesFilter<"schedule_actions"> | string
   time_begin?: Prisma.DateTimeWithAggregatesFilter<"schedule_actions"> | Date | string
+  time_fact_begin?: Prisma.DateTimeNullableWithAggregatesFilter<"schedule_actions"> | Date | string | null
   manual_fill?: Prisma.JsonNullableWithAggregatesFilter<"schedule_actions">
 }
 
@@ -213,6 +225,7 @@ export type schedule_actionsUpdateInput = {
   tt_action_item_id?: Prisma.StringFieldUpdateOperationsInput | string
   tr_id?: Prisma.StringFieldUpdateOperationsInput | string
   time_begin?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  time_fact_begin?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   manual_fill?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
 }
 
@@ -220,6 +233,7 @@ export type schedule_actionsUncheckedUpdateInput = {
   tt_action_item_id?: Prisma.StringFieldUpdateOperationsInput | string
   tr_id?: Prisma.StringFieldUpdateOperationsInput | string
   time_begin?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  time_fact_begin?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   manual_fill?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
 }
 
@@ -227,6 +241,7 @@ export type schedule_actionsUpdateManyMutationInput = {
   tt_action_item_id?: Prisma.StringFieldUpdateOperationsInput | string
   tr_id?: Prisma.StringFieldUpdateOperationsInput | string
   time_begin?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  time_fact_begin?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   manual_fill?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
 }
 
@@ -234,6 +249,7 @@ export type schedule_actionsUncheckedUpdateManyInput = {
   tt_action_item_id?: Prisma.StringFieldUpdateOperationsInput | string
   tr_id?: Prisma.StringFieldUpdateOperationsInput | string
   time_begin?: Prisma.DateTimeFieldUpdateOperationsInput | Date | string
+  time_fact_begin?: Prisma.NullableDateTimeFieldUpdateOperationsInput | Date | string | null
   manual_fill?: Prisma.NullableJsonNullValueInput | runtime.InputJsonValue
 }
 
@@ -241,6 +257,7 @@ export type schedule_actionsCountOrderByAggregateInput = {
   tt_action_item_id?: Prisma.SortOrder
   tr_id?: Prisma.SortOrder
   time_begin?: Prisma.SortOrder
+  time_fact_begin?: Prisma.SortOrder
   manual_fill?: Prisma.SortOrder
 }
 
@@ -248,12 +265,14 @@ export type schedule_actionsMaxOrderByAggregateInput = {
   tt_action_item_id?: Prisma.SortOrder
   tr_id?: Prisma.SortOrder
   time_begin?: Prisma.SortOrder
+  time_fact_begin?: Prisma.SortOrder
 }
 
 export type schedule_actionsMinOrderByAggregateInput = {
   tt_action_item_id?: Prisma.SortOrder
   tr_id?: Prisma.SortOrder
   time_begin?: Prisma.SortOrder
+  time_fact_begin?: Prisma.SortOrder
 }
 
 
@@ -262,6 +281,7 @@ export type schedule_actionsSelect<ExtArgs extends runtime.Types.Extensions.Inte
   tt_action_item_id?: boolean
   tr_id?: boolean
   time_begin?: boolean
+  time_fact_begin?: boolean
   manual_fill?: boolean
 }, ExtArgs["result"]["schedule_actions"]>
 
@@ -270,6 +290,7 @@ export type schedule_actionsSelectUpdateManyAndReturn<ExtArgs extends runtime.Ty
   tt_action_item_id?: boolean
   tr_id?: boolean
   time_begin?: boolean
+  time_fact_begin?: boolean
   manual_fill?: boolean
 }, ExtArgs["result"]["schedule_actions"]>
 
@@ -277,10 +298,11 @@ export type schedule_actionsSelectScalar = {
   tt_action_item_id?: boolean
   tr_id?: boolean
   time_begin?: boolean
+  time_fact_begin?: boolean
   manual_fill?: boolean
 }
 
-export type schedule_actionsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"tt_action_item_id" | "tr_id" | "time_begin" | "manual_fill", ExtArgs["result"]["schedule_actions"]>
+export type schedule_actionsOmit<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = runtime.Types.Extensions.GetOmit<"tt_action_item_id" | "tr_id" | "time_begin" | "time_fact_begin" | "manual_fill", ExtArgs["result"]["schedule_actions"]>
 
 export type $schedule_actionsPayload<ExtArgs extends runtime.Types.Extensions.InternalArgs = runtime.Types.Extensions.DefaultArgs> = {
   name: "schedule_actions"
@@ -289,6 +311,7 @@ export type $schedule_actionsPayload<ExtArgs extends runtime.Types.Extensions.In
     tt_action_item_id: string
     tr_id: string
     time_begin: Date
+    time_fact_begin: Date | null
     manual_fill: runtime.JsonValue | null
   }, ExtArgs["result"]["schedule_actions"]>
   composites: {}
@@ -645,6 +668,7 @@ export interface schedule_actionsFieldRefs {
   readonly tt_action_item_id: Prisma.FieldRef<"schedule_actions", 'String'>
   readonly tr_id: Prisma.FieldRef<"schedule_actions", 'String'>
   readonly time_begin: Prisma.FieldRef<"schedule_actions", 'DateTime'>
+  readonly time_fact_begin: Prisma.FieldRef<"schedule_actions", 'DateTime'>
   readonly manual_fill: Prisma.FieldRef<"schedule_actions", 'Json'>
 }
     

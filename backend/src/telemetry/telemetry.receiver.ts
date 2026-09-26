@@ -72,8 +72,8 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
         );
 
         this.history.add(telemetry);
-
-        await this.repository.save(telemetry);
+          await this.repository.save(telemetry);
+          await this.repository.saveLastState(telemetry);
 
         this.logger.log(
           `VehicleState: ${JSON.stringify(telemetry)}`,

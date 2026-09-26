@@ -29,9 +29,10 @@ model schedule_actions {
   tt_action_item_id String                  @id @db.VarChar(64)
   tr_id             String                  @db.VarChar(64)
   time_begin        DateTime                @db.Timestamptz(6)
+  time_fact_begin   DateTime?
   geom              Unsupported("geometry")
   manual_fill       Json?
-
+  
   @@index([tr_id, time_begin], map: "idx_schedule_tr_time")
 }
 

@@ -39,9 +39,11 @@ CREATE TABLE IF NOT EXISTS schedule_actions (
     tt_action_item_id VARCHAR(64) PRIMARY KEY,
     tr_id VARCHAR(64) NOT NULL,
     time_begin TIMESTAMPTZ NOT NULL,
+    time_fact_begin TIMESTAMPTZ,
     geom geometry(Point, 4326) NOT NULL,
     manual_fill JSONB
 );
+
 
 CREATE INDEX IF NOT EXISTS idx_schedule_tr_time ON schedule_actions (tr_id, time_begin);
 

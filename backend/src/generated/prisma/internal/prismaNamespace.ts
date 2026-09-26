@@ -912,6 +912,7 @@ export const Schedule_actionsScalarFieldEnum = {
   tt_action_item_id: 'tt_action_item_id',
   tr_id: 'tr_id',
   time_begin: 'time_begin',
+  time_fact_begin: 'time_fact_begin',
   manual_fill: 'manual_fill'
 } as const
 
