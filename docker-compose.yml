@@ -20,7 +20,17 @@ services:
       timeout: 5s
       retries: 5
       start_period: 15s
-
+  postgres:
+    image: postgis/postgis:14-3.4
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: mostransport
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/mtr_DB_v2.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
   backend:
     build:
       context: ./backend
@@ -72,3 +82,5 @@ services:
         -H 'Content-Type: application/json'
         --data @/emulator-config.json
     restart: "no"
+volumes:
+  postgres_data:
