@@ -1,5 +1,5 @@
 {
-  "targetHost": "backend",
+  "targetHost": "host.docker.internal",
   "targetPort": 9000,
   "units": [
     { "unitId": 1001, "intervalMs": 5000, "autoGenerate": true, "cells": [] },

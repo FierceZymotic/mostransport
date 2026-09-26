@@ -8,6 +8,7 @@ import { Server, Socket, createServer } from 'node:net';
 import { NdtpPacketExtractor } from './ndtp/ndtp.packet-extractor.js';
 import { TelemetryParser } from './telemetry.parser.js';
 import { TelemetryHistory } from './telemetry-history.js';
+import { TelemetryRepository } from './telemetry.repository.js';
 
 @Injectable()
 export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
@@ -19,10 +20,12 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
     process.env.TELEMETRY_PORT ?? 9000,
   );
 
- constructor(
-  private readonly parser: TelemetryParser,
-  private readonly history: TelemetryHistory,
-) {}
+  constructor(
+    private readonly parser: TelemetryParser,
+    private readonly history: TelemetryHistory,
+    private readonly repository: TelemetryRepository,
+  ) {}
+
   onModuleInit() {
     this.server = createServer((socket) => {
       this.handleConnection(socket);
@@ -44,7 +47,7 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
 
     const extractor = new NdtpPacketExtractor();
 
-    socket.on('data', (chunk: Buffer) => {
+    socket.on('data', async (chunk: Buffer) => {
       this.logger.log(
         `Received ${chunk.length} bytes`,
       );
@@ -52,22 +55,30 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
       const packets = extractor.push(chunk);
 
       for (const packet of packets) {
-  this.logger.debug(
-    `NDTP packet extracted: ${packet.raw.length} bytes`,
-  );
+        this.logger.debug(
+          `NDTP packet extracted: ${packet.raw.length} bytes`,
+        );
 
-  if (packet.payload.length !== 123) {
-    this.logger.debug(
-      `Skipping non-telemetry packet: payload=${packet.payload.length} bytes`,
-    );
-    continue;
-  }
+        if (packet.payload.length !== 123) {
+          this.logger.debug(
+            `Skipping non-telemetry packet: payload=${packet.payload.length} bytes`,
+          );
+          continue;
+        }
 
-  const telemetry = this.parser.parse(packet.payload, packet.unitId);
-  this.history.add(telemetry);
+        const telemetry = this.parser.parse(
+          packet.payload,
+          packet.unitId,
+        );
 
-  this.logger.log(`VehicleState: ${JSON.stringify(telemetry)}`);
-}
+        this.history.add(telemetry);
+
+        await this.repository.save(telemetry);
+
+        this.logger.log(
+          `VehicleState: ${JSON.stringify(telemetry)}`,
+        );
+      }
     });
 
     socket.on('close', () => {
