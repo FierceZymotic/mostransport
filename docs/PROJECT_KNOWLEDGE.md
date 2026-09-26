@@ -163,15 +163,20 @@ Bundle, artifact-backed inference, serving Contract v1, validate submission,
   (только `validate/points.csv`, `validate/traffic.csv`,
   `validate/schedule_plan.csv`; target-колонки в points — ошибка);
   шаблон `sample_submission.csv`; плановый fingerprint schedule.
+- `data/safe_deviation.py` — offline/training-only point-in-time-safe текущее
+  отклонение из factual schedule (`time_fact_begin <= T`, research tie-break);
+  наружу отдаёт только значения для `offline_context(..., current_deviation_seconds=...)`.
 - `data/inspection.py`, `data/manifest.py`, `data/canonical.py` — generic
   инструменты вне production-пути признаков.
 - `target/` — `TargetSpec`, `TARGET_SPEC`, `training_target` /
   `final_prediction` (DIRECT: ŷ = f(X); RESIDUAL: ŷ = cur_dev_s + f(X)).
 - `evaluation/`, `experiments/` — MAE, temporal split, baseline, JSONL лог.
-- `features/` — `schema.py` (37 признаков `tabular-v1`), `builder.py`
+- `features/` — `schema.py` (37 признаков `tabular-v1`; frozen `runtime-safe-v1` —
+  29 признаков без raw counts, в artifact/serving пока не активна), `builder.py`
   (point-in-time), `spatial.py`, `context.py` (`CanonicalBatch`,
-  `build_features_from_context`), `adapters.py` (`offline_context`,
-  `runtime_context`).
+  `build_features_from_context`, единственная проекция 37 → 29
+  `project_runtime_safe_features`), `adapters.py` (`offline_context` с keyword-only
+  override `current_deviation_seconds` по `sample_id`, `runtime_context`).
 - `models/` — замороженные M1 CatBoost config и train regimes
   (`scripts/run_offline_baseline.py`).
 - `artifacts/` — `manifest.py` (ArtifactManifest v1: канонический JSON,
