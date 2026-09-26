@@ -13,4 +13,8 @@ export class PredictionController {
       Number(unitId),
     );
   }
+  @Get('db-test')
+async dbTest() {
+  return this.predictionService.testDatabase();
+}
 }

@@ -5,14 +5,17 @@ import {
   PredictionRequest,
   PredictionResponse,
 } from './ml/ml.types.js';
+import { PrismaService } from '../prisma/prisma.service.js';
 
 @Injectable()
 export class PredictionService {
   constructor(
-    private readonly mlClient: MlClientService,
-    private readonly telemetryHistory: TelemetryHistory,
-  ) {}
+  private readonly mlClient: MlClientService,
+  private readonly telemetryHistory: TelemetryHistory,
+  private readonly prisma: PrismaService,
+) {}
 
+  
   async predictForVehicle(
     unitId: number,
   ): Promise<PredictionResponse> {
@@ -72,7 +75,11 @@ export class PredictionService {
           speed: state.speed,
         })),
     };
+     
 
     return this.mlClient.predict(request);
   }
+  async testDatabase(): Promise<number> {
+  return this.prisma.vehicles.count();
+}
 }
