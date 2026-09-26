@@ -22,6 +22,7 @@ venv/
 # --- Environment / secrets ---
 .env
 .env.*
+!.env.example
 
 # --- Organizer / confidential data: never commit ---
 # Keep the directories and their README/.gitkeep, ignore everything inside.
@@ -38,7 +39,21 @@ experiments/*.log
 *.pkl
 *.joblib
 *.cbm
+# Root-level Artifact Bundle output (anchored: must NOT match the source
+# package src/mostransport_ml/artifacts/).
+/artifacts/
+# Generated submissions.
+submission*.csv
+
+# --- JS tooling (Backend/Frontend will live in this repository) ---
+node_modules/
 
 # --- OS / IDE ---
 .DS_Store
 .idea/
+# Windows alternate data streams copied into WSL.
+*:Zone.Identifier
+
+# Local AI-agent instructions
+/AGENTS.md
+/CLAUDE.md

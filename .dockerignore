@@ -1,0 +1,10 @@
+# Whitelist: only what the ML service image needs. Organizer data (data/),
+# notebooks, experiment logs, artifacts and local environments never enter
+# the build context.
+*
+!pyproject.toml
+!uv.lock
+!README.md
+!src/
+**/__pycache__
+**/*.pyc

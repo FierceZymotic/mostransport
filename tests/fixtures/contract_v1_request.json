@@ -1,0 +1,25 @@
+{
+  "request_id": "3d6f2c1a-7b8e-4f5a-9c0d-1e2f3a4b5c6d",
+  "prediction_time": "2026-01-06T03:35:00Z",
+  "vehicle_context": {
+    "unit_id": "unit-demo",
+    "tr_id": "131672",
+    "route_id": "route-demo"
+  },
+  "schedule_context": {
+    "target_action_id": "53700172828",
+    "target_time_begin": "2026-01-06T03:47:00Z",
+    "target_lat": 55.7512,
+    "target_lon": 37.6184,
+    "current_deviation_seconds": 274,
+    "manual_fill": false
+  },
+  "telemetry": [
+    {"event_time": "2026-01-06T02:55:00Z", "lat": 55.7401, "lon": 37.6002, "location_valid": true, "speed": 30.0},
+    {"event_time": "2026-01-06T03:25:00Z", "lat": 55.7403, "lon": 37.6004, "location_valid": false, "speed": 10.0},
+    {"event_time": "2026-01-06T03:31:00Z", "lat": 55.7404, "lon": 37.6005, "location_valid": false, "speed": 0.0},
+    {"event_time": "2026-01-06T03:34:30Z", "lat": 55.7405, "lon": 37.6006, "location_valid": false, "speed": 8.0},
+    {"event_time": "2026-01-06T03:35:00Z", "lat": 55.7406, "lon": 37.6007, "location_valid": false, "speed": 11.0},
+    {"event_time": "2026-01-06T03:35:00Z", "lat": 55.7407, "lon": 37.6008, "location_valid": false, "speed": 22.0}
+  ]
+}

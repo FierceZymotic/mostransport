@@ -1,11 +1,19 @@
-"""ML artifact bundle — ещё не реализован; `metadata.py` — исключение.
+"""Метаданные и целостность ML-артефактов. Загрузки моделей здесь нет.
 
-`metadata.ArtifactMetadata` — минимальная, стабильная форма метаданных
-(версия модели, информация о target, опциональный validation MAE). Это
-намеренно не artifact loader: здесь нет загрузки `.cbm`/joblib/
-preprocessing, потому что реальный формат модели неизвестен, пока не
-появится реальная модель.
+- `manifest.ArtifactManifest` — Artifact Manifest v1: модельно-независимые,
+  строго валидируемые метаданные артефакта с канонической сериализацией,
+  SHA-256 fingerprint и проверкой совместимости по `feature_schema_version`
+  (`validate_compatibility`).
+- `bundle` — Artifact Bundle v1: каталог `manifest.json` + бинарник модели +
+  `bundle.json` с SHA-256 обоих файлов; `load_bundle` проверяет безопасность
+  имён, хеши, manifest, совместимость и поддержку `model_family` до того, как
+  кто-либо загрузит модель.
+- `metadata.ArtifactMetadata` — LEGACY: прежняя provisional-форма метаданных,
+  сохранена без изменений только для обратной совместимости. Новый код
+  использует `ArtifactManifest`.
 
-Владелец — Valeria. Ожидаемая форма полноценного artifact bundle, когда
-появится реальный model pipeline — docs/ARCHITECTURE.md §7.
+Загрузка/сериализация конкретных model family — `mostransport_ml.inference`.
+Пакет зависит только от stdlib.
+
+Архитектурный контекст — docs/ARCHITECTURE.md.
 """

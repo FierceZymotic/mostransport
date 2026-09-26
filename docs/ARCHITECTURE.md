@@ -1,422 +1,250 @@
 # Архитектура
 
-Источник истины по техническим границам системы: что подтверждено, что
-только запланировано, кто чем владеет. Читать перед добавлением новой
+Источник истины по техническим границам системы: что реализовано, какие
+инварианты действуют, кто чем владеет. Читать перед добавлением новой
 подсистемы или абстракции.
 
-Это документ 48-часового хакатона. Он намеренно тонкий. Там, где что-то
-пока нельзя знать, стоит явная пометка **TBD**, а не догадка.
-
 Роль этого документа — строгие технические границы и потоки данных. Более
-широкое, "человеческое" описание проекта (зачем он нужен, кто чем владеет
-в терминах процесса, как читать репозиторий) — в
-[`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md).
+широкое описание проекта — в [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md);
+контракт Backend → ML — в [`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md)
+(карта его реализации — [`ML_SERVING_CONTRACT.md`](ML_SERVING_CONTRACT.md)).
 
 ---
 
 ## 1. Назначение
 
-Раннее прогнозирование задержек/изменений наземного городского транспорта
-(хакатон Мостранспорта). Бизнес-цель — перевести диспетчеров из
-реактивного режима в проактивный: например, скорректировать количество ТС
-на маршруте или время стоянки на остановке до того, как задержка
-накопится.
+Раннее прогнозирование задержки прибытия наземного транспорта (хакатон
+Мостранспорта): перевести диспетчеров из реактивного режима в проактивный.
 
-Этот репозиторий содержит **offline ML-часть** (fz): превращение
-организаторского CSV в валидированный target, leakage-safe схему оценки
-и (когда появится реальная модель) обученный артефакт. С текущего
-checkpoint'а он также содержит **provisional serving-фундамент**
-(Valeria): FastAPI-сервис с детерминированным mock-предиктором, собранный
-заранее, чтобы не блокировать интеграцию с backend'ом на ожидании
-реальной модели. Контракт serving-слоя — в
-[`ML_SERVING_CONTRACT.md`](ML_SERVING_CONTRACT.md).
+Сейчас этот репозиторий содержит ML-часть: безопасное чтение официальных
+данных, point-in-time признаки, обучение/оценка, Artifact Bundle,
+artifact-backed инференс для runtime (Backend → ML Contract v1) и для
+validate submission. Он становится основой общего командного репозитория:
+Backend и Frontend будут добавлены на верхнем уровне рядом с текущей
+структурой, без перестройки ML (Python-пакет, `tests/`, `scripts/`,
+`pyproject.toml`, `Dockerfile` остаются на месте).
 
-## 2. Подтверждённые факты организаторов
+## 2. Подтверждённые факты (официальный датасет + Dataset Evidence v1)
 
-На момент написания, до публикации полного ТЗ:
+Dataset Evidence v1 — тег `dataset-evidence-v1` (92-ячеечная версия notebook;
+исторический 94-ячеечный артефакт `9eb2c78b…` в теге не содержится — см.
+`notebooks/fz/01_official_dataset_evidence.PROVENANCE.md`).
 
-- обучающие данные будут выданы в виде custom CSV;
-- полная схема по полям пока не опубликована — появится на старте
-  хакатона;
-- отдельный Docker-образ будет эмулировать online-поток телеметрии;
-- будет предоставлен официальный mapping CSV ↔ emulator fields;
-- primary scoring-метрика — **MAE фактической задержки**;
-- точная семантика target/delay/horizon пока не определена;
-- внешние источники данных разрешены для обогащения;
-- организаторские датасеты нельзя публиковать или использовать за
-  пределами разрешённых условий хакатона.
+- Точка прогноза — `(tr_id, T)`; target — `target_delay_s =
+  time_fact_begin − time_begin` (секунды, `+` опоздание) на первой
+  остановке с плановым прибытием в `(T+10м, T+15м]`; метрика — MAE.
+- Для прогноза в `T` разрешена только telemetry с `event_time <= T`.
+- Официальные naive timestamps — UTC wall-clock без метки пояса.
+- `traffic.csv speed` = `G6CellNav00 speedAvg`; в runtime `speed` всегда
+  число (wire-инвариант Contract v1).
+- Датасет получен внутренним процессингом организаторов из telemetry типа
+  эмулятора; точное преобразование не раскрыто (ответ организаторов).
+- `labels_test` — официальный local model-selection split; `validate` —
+  скрытый leaderboard (target недоступен).
+- Факт `test/schedule.csv` структурно раскрывает hidden target validate —
+  его использование для validate запрещено.
+- Организаторские датасеты нельзя коммитить или публиковать.
 
-## 3. Целевая end-to-end архитектура (CURRENT + PLANNED)
-
-Диаграмма ниже показывает **согласованное направление системы целиком** —
-она сознательно смешивает уже реализованные шаги с ещё не реализованными,
-чтобы показать, как они должны состыковаться в итоге. Она не описывает
-«систему, как она работает сегодня»: большая часть online-цепочки
-(`PredictionService`, `ML Client`, `Risk Rules / Alerts`) и часть
-offline-цепочки (`target construction`, `shared feature logic`, `model
-training`, `ML Artifact Bundle`) — ЗАПЛАНИРОВАНЫ, кода для них ещё нет.
-Что реально существует прямо сейчас — по каждой стороне отдельно и точно
-— описано ниже в §5 (backend Андрея) и §6–§7 (offline/serving fz и
-Valeria); там прямо разделены CURRENT и PLANNED части.
+## 3. End-to-end архитектура (реализовано)
 
 ```
-OFFLINE                                   ONLINE
-
-organizer CSV                             Organizer Emulator (Docker)
-    |                                          |
-offline ingest                            Node TelemetryService
-    |                                          |
-data understanding / quality              Node VehicleStateService
-    |                                          |
-alignment / canonical representation      PredictionScheduler
-    |                                          |
-target construction                       PredictionService
-    |                                          |
-temporal evaluation                       ML Client
-    |                                          |  HTTP/JSON
-shared feature logic  ------------------> Python ML Service
-    |                                          |
-model training                            predicted delay
-    |                                          |
-evaluation (primary metric: MAE)          Backend Risk Rules / Alerts
-    |                                          |
-ML Artifact Bundle  ---------------------> (loaded by Python ML Service)
-                                                |
-                                           WebSocket / REST
-                                                |
-                                           React Dispatcher Dashboard
+OFFLINE / RESEARCH                          RUNTIME
+official dataset                            Backend (NDTP, VehicleState, schedule matching)
+  │ data/official.py (allowlist loaders)       │ Contract v1 JSON (aware ISO-8601 UTC)
+  ▼                                            ▼
+features/adapters.offline_context       serving: Pydantic → features/adapters.runtime_context
+  └───────────────┬────────────────────────────┘
+                  ▼
+        CanonicalBatch (features/context.py, naive UTC)
+                  ▼
+        build_features_from_context → frozen tabular-v1 builder (features/builder.py)
+                  ▼
+        inference.ArtifactPredictor ← Artifact Bundle v1 (artifacts/bundle.py + manifest.py)
+                  ▼                     (model family: catboost)
+        delay_seconds (direct | residual via target/formulation.py)
+          │                                   │
+  inference/submission.py                serving: Contract v1 response
+  (validate → sample_id;prediction)       (POST /api/v1/predict)
 ```
 
-**Ключевой инвариант:** backend владеет операционным состоянием; Python
-владеет ML-трансформациями и инференсом. Будущий Python ML Service не
-хранит operational-историю по конкретным vehicle (её приносит каждый
-запрос от backend'а) — но при этом обычным образом держит в памяти
-загруженный model-артефакт и другие статичные объекты инференса между
-запросами, как и любой обычный inference-сервис. «Не хранит историю
-по vehicle» и «не имеет вообще никакого состояния в процессе» — разные
-утверждения; верно первое, не второе.
+**Ключевой инвариант:** одна feature-реализация и одна prediction-логика для
+обоих путей. Backend владеет операционным состоянием и доменными фактами;
+Python владеет model-specific признаками и инференсом. Python ML Service не
+хранит историю по vehicle между запросами (её приносит каждый запрос), но
+держит в памяти загруженный artifact — это обычная часть inference-сервиса.
+
+Зависимости пакетов (однонаправленные, без циклов):
+
+```
+data, features, target, artifacts   (artifacts — только stdlib)
+        ▲
+inference  (→ artifacts, features, target, data)
+        ▲
+serving    (→ inference, features)
+```
+
+`models/` (M1 CatBoost config, train regimes) зависит только от `target/`.
 
 ## 4. Границы ownership
 
 | Владелец | Ответственность |
 |--------|----------------|
-| **fz** (этот репозиторий) | data → target → evaluation correctness |
-| **Valeria** | features → model → serving |
-| **Andrey** | backend / операционное состояние / scheduler / интеграция / realtime / frontend |
+| **fz** — canonical ML track | данные, target, evaluation, Feature Builder, контракты, Artifact Bundle, inference, serving, promotion gates |
+| **Valeria** | изолированное feature/model research; кандидаты передаются как совместимый Artifact Bundle |
+| **Andrey** | backend / NDTP / операционное состояние / schedule matching / cadence / alerts / realtime / frontend |
 | **Lisa** | БД / reference data / BI / аналитика |
 
-## 5. Текущий checkpoint backend'а Андрея
+## 5. Граница Backend ↔ ML
 
-Read-only ссылка (backend лежит в соседнем репозитории, NestJS/TypeScript).
+Backend (NestJS/TypeScript) будет добавлен в этот же репозиторий как
+соседний компонент верхнего уровня; сейчас его кода здесь нет. Граница
+между компонентами — только HTTP Contract v1
+([`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md)); общий репозиторий
+не означает общего кода: ML не импортирует Backend, Backend не реализует
+признаки модели.
 
-**Текущая реализация** (сверено с исходным кодом backend'а):
+Backend владеет, и ML не дублирует: приём/парсинг NDTP,
+операционный `VehicleState` и историю, schedule/route matching, текущее
+отклонение от расписания, `manual_fill`, координаты цели, prediction
+eligibility и cadence, risk/alerts, WebSocket/REST, frontend, PostgreSQL.
 
-- `POST /telemetry/events` → `TelemetryController`
-- `TelemetryService`, вызывающий `VehicleStateService`
-- `VehicleStateService` — ранний scaffold: сейчас в основном
-  формирует/возвращает объект состояния по одному входящему событию — он
-  **ещё не** реализует персистентный `Map<vehicleId, VehicleState>`
-- `PredictionScheduler` существует как scaffold (в исходнике backend'а
-  прямо помечен комментарием как заглушка); проверяет только
-  `Boolean(event.vehicle_id)`, без реальной логики планирования
+Backend присылает по Contract v1 доменные факты + сырую историю telemetry
+(`(T-15m, T]` + последний пакет + последний strict-valid GPS пакет `<= T`).
+Он выбирает целевое плановое событие, считает point-in-time-safe
+`current_deviation_seconds` и передаёт `manual_fill` из выбранной строки
+расписания (правила — `BACKEND_ML_INTEGRATION.md` §5.1). Он не вычисляет
+model-specific признаки и не присылает `event_time > T` (producer-правило);
+ML всё равно отбрасывает такие пакеты (defense-in-depth).
 
-**Запланированная архитектура** (ещё не реализована):
+## 6. Offline-модули
 
-- memory-first `VehicleState`, концептуально `Map<vehicleId, VehicleState>`
-- окно недавней телеметрии по каждому vehicle
-- необязательность постоянного хранения `VehicleState` в PostgreSQL
+- `data/official.py` — безопасные loaders: train/test (target отделён,
+  schedule по allowlist без `time_fact_begin`), validate inference inputs
+  (только `validate/points.csv`, `validate/traffic.csv`,
+  `validate/schedule_plan.csv`), шаблон `sample_submission.csv`,
+  плановый fingerprint schedule.
+- `data/inspection.py`, `data/manifest.py`, `data/canonical.py` — generic
+  инструменты (не часть production-пути признаков).
+- `target/spec.py`, `target/formulation.py` — `TARGET_SPEC`,
+  DIRECT/RESIDUAL (`final_prediction` — единая реконструкция).
+- `evaluation/` — `mae()`, temporal split, median baseline.
+- `experiments/log.py` — append-only JSONL лог.
+- `models/catboost_v1.py`, `models/regimes.py` — замороженные M1 config и
+  train regimes; `scripts/run_offline_baseline.py` — 6 экспериментов M1.
 
-Наблюдаемая текущая форма события (`TelemetryEventDto`): `vehicle_id`,
-`event_time`, `lon`, `speed`, `direction`, опционально `route_id`,
-`trip_id`, `stop_id`. Это **не** трактуется здесь как подтверждённая
-каноническая схема — это текущий checkpoint backend'а, показан только
-чтобы держать доменные имена (`vehicle`/`route`/`trip`/`stop`)
-согласованными по команде. Скорее всего изменится, как только появится
-официальная схема CSV/эмулятора.
+## 7. Признаки, artifact, inference, serving
 
-Backend владеет, и этот репозиторий не должен дублировать (ни текущее, ни
-запланированное):
-
-- runtime-приём телеметрии
-- операционный `VehicleState`
-- окно недавней телеметрии
-- `PredictionScheduler` / `PredictionService`
-- ML Client
-- risk rules, alerts
-- WebSocket, REST, интеграцию с frontend
-- PostgreSQL/Prisma (routes, stops, trips, schedule, prediction_history, alerts)
-
-Этот репозиторий не реализует и не будет реализовывать ничего из
-перечисленного выше.
-
-## 6. Offline-ответственность (fz)
-
-Что реализовано здесь, в `src/mostransport_ml/`:
-
-- `data/inspection.py` — generic, schema-agnostic профилирование
-  CSV/dataframe.
-- `data/manifest.py` — метаданные воспроизводимости для версии датасета
-  (hash, схема, row count), никогда не сырые строки.
-- `data/canonical.py` — явный механизм rename + required-field, без
-  захардкоженного списка полей (см. §9).
-- `target/spec.py` — метаданная-обёртка для описания таргета, не
-  построение самого таргета (см. §10).
-- `evaluation/metrics.py` — MAE, строго валидированная.
-- `evaluation/temporal.py` — хронологический train/validation/test split.
-- `evaluation/baseline.py` — константный baseline по медиане train.
-- `experiments/log.py` — append-only JSONL лог экспериментов.
-
-Граница ответственности: **data → target → evaluation correctness**. Этот
-репозиторий гарантирует, что как только появятся реальный CSV и
-определение таргета, их можно будет понять, канонизировать, разбить по
-времени и оценить корректно и воспроизводимо.
-
-## 7. Будущая интеграция Valeria
-
-Зарезервированные пакеты: `features/`, `models/`, `artifacts/`,
-`serving/`. Они существуют, чтобы Valeria могла добавить реальное
-содержимое без реорганизации репозитория.
-
-**Текущая реализация** (provisional, pre-task-release фундамент):
-
-- `serving/` — FastAPI-shell: `GET /health`, `GET /ready`,
-  `POST /api/v1/predict/batch`. Никакой model/feature-логики на уровне
-  эндпоинтов — см. границу `Predictor` в `serving/service.py`. Эта
-  граница проверяется в рантайме, а не является просто типовой подсказкой
-  `typing.Protocol`: predictor не должен мутировать переданный ему
-  request, `is_ready()` обязан вернуть ровно `bool`, а `model_version()`
-  готового predictor'а обязан быть непустой строкой — нарушения
-  превращаются в безопасный `503`/`500`, а не в неконтролируемое падение
-  или тихо неверный ответ.
-- `serving/mock.py` — `MockPredictor`: детерминированный, всегда готов,
-  фиксированный `model_version="mock-v0"`, `predicted_delay=0.0` для
-  каждого vehicle. Используется для интеграции с backend/frontend до
-  появления реальной модели и рассчитан оставаться полезным и после (например,
-  для локальной разработки), а не быть одноразовым. Подключается только
-  явно (`serving/mock_app.py`) — `serving/app.py::create_app` никогда не
-  выбирает его по умолчанию.
-- `artifacts/metadata.py` — `ArtifactMetadata`: минимальная, стабильная
-  форма метаданных (`model_version`, `created_at`, `model_type`,
-  `target_name`, опционально `target_unit`/`target_version`/
-  `feature_schema_version`/`validation_mae`). Не загрузчик артефакта —
-  реальный формат модельного файла пока неизвестен.
-- `features/` и `models/` остаются пустыми — feature- и training-логики
-  ещё нет.
-
-Полный контракт запроса/ответа — [`ML_SERVING_CONTRACT.md`](ML_SERVING_CONTRACT.md).
-**Поле `context` у каждого vehicle в запросе намеренно непрозрачно
-(нетипизированный JSON-объект) и ДОЛЖНО быть заменено/ужесточено, как
-только появится официальный mapping CSV ↔ emulator** — ни `MockPredictor`,
-ни serving-слой не читают из него transport-specific ключи.
-
-**Запланировано после публикации полного ТЗ** (ещё не реализовано):
-
-- общий Feature Builder (`features/`), используемый и offline-обучением,
-  и online-сервингом
-- pipeline предобработки/обучения модели (`models/`)
-- реальная реализация Artifact Bundle (`artifacts/`) — настоящий
-  загрузчик модели поверх сегодняшнего `ArtifactMetadata`
-- artifact-backed `Predictor`, заменяющий `MockPredictor`, подключаемый в
-  тот же `serving/app.py::create_app` без изменения HTTP-слоя
-
-Всё перечисленное, текущее и запланированное, — зона Valeria.
+- `features/builder.py` — замороженный `tabular-v1` (37 признаков,
+  `features/schema.py`): `event_time <= T`, окна `(T-w, T]`, strict GPS,
+  fail-fast на `time_fact_begin`/`target_delay_s`/`target_class`.
+- `features/context.py` — `CanonicalPoint`/`CanonicalTelemetry`/
+  `CanonicalBatch` и единственный вход `build_features_from_context`.
+- `features/adapters.py` — нормализация: `offline_context` (official кадры)
+  и `runtime_context` (Contract v1: aware ISO → naive UTC, naive → ошибка,
+  случайно пришедшие пакеты `> T` отбрасываются defensively, история не
+  обрезается). Канонический контекст допускает отсутствующую скорость
+  исторических данных; wire-инвариант `speed` — в `serving/schemas.py`.
+- `artifacts/manifest.py` — ArtifactManifest v1 (канонический JSON, SHA-256,
+  совместимость по `feature_schema_version`); `artifacts/bundle.py` —
+  Artifact Bundle v1 (`manifest.json` + модель + `bundle.json` с хешами;
+  проверка до загрузки модели); `artifacts/metadata.py` — LEGACY.
+- `inference/` — `ArtifactPredictor` (bundle → builder → модель →
+  direct/residual), `export_bundle`, model family `catboost` = обученная
+  скалярная регрессия (проверяются сохранённый objective и форма выхода
+  самой модели, не класс обёртки), validate submission.
+- `serving/` — Contract v1 (`POST /api/v1/predict`), `/health`, `/ready`;
+  `artifact_app.py` (production), `mock_app.py` (явный mock). Provisional
+  v0 (`/api/v1/predict/batch`, непрозрачный `context`) удалён.
 
 ## 8. Offline data flow
 
-См. диаграмму в §3. Конкретно, offline (шаги 1–4, 6–7 — уже реализованный
-и протестированный инструментарий, готовый к запуску на реальных данных;
-шаги 5 и 8 — ещё не реализованы, появятся после публикации ТЗ; подробное
-разделение — [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.9):
+1. Официальный датасет лежит вне репозитория (`MOSTRANSPORT_DATASET`).
+2. `load_official_split` / `load_validate_inputs` читают только разрешённые
+   колонки и файлы.
+3. `offline_context` → `CanonicalBatch` → `build_features_from_context`.
+4. Обучение кандидата (research) → `ArtifactManifest` → `export_bundle`.
+5. Оценка на `labels_test` через `ArtifactPredictor`; submission —
+   `scripts/make_submission.py`.
 
-1. Организаторский CSV попадает в `data/raw/` (никогда не коммитится).
-2. `scripts/inspect_csv.py` профилирует его — схема, missing, дубликаты.
-3. Строится `DatasetManifest` для воспроизводимости.
-4. `CanonicalMapping` (как только реальные поля станут известны)
-   переименовывает/валидирует в общее доменное представление.
-5. Построение таргета (появится после публикации ТЗ) даёт реальный label.
-6. `split_by_time_boundaries` строит train/validation/test хронологически.
-7. `MedianBaselineRegressor` + `mae()` сразу дают честный baseline.
-8. Далее: feature/model pipeline Valeria обучается на том же split'е и
-   каноническом представлении, логируя запуски через `experiments/log.py`.
+## 9. Каноническое представление
 
-## 9. Стратегия канонической схемы
-
-Ни один канонический список полей нигде в этом репозитории не
-захардкожен. Официальная схема CSV и схема эмулятора неизвестны до старта
-хакатона, организатор предоставит mapping CSV ↔ emulator.
-
-Вместо этого `data/canonical.py` даёт только *механизм*:
-
-```python
-CanonicalMapping(
-    source_name=...,
-    rename={...},  # только явно заданное, ничего не выводится автоматически
-    required_fields=(...),  # только явно заданное
-)
-```
-
-`apply_canonical_mapping()` переименовывает ровно перечисленные колонки и
-проверяет ровно перечисленные обязательные поля. Никакого feature
-engineering здесь нет. Как только реальная схема CSV станет известна, это
-точка, где offline-поля организаторского CSV приводятся к общему
-каноническому доменному представлению.
-
-**Важное уточнение семантики — читать внимательно:** `CanonicalMapping`
-— это **только** offline-механизм работы с `pandas.DataFrame`, применяемый
-к организаторскому CSV. Он не обязателен и не должен физически
-вызываться для online/emulator-пути:
-
-```
-organizer CSV  →  CanonicalMapping  →  совместимая каноническая семантика  (offline, этот репозиторий)
-online/backend →  будущий Feature Contract  →  совместимая доменная семантика  (НЕ через data/canonical.py)
-```
-
-Backend/online-путь должен прийти к **совместимой** (не обязательно
-буквально тем же кодом достигнутой) доменной семантике через будущий
-Feature Contract — но никогда не обязан и не должен физически вызывать
-`data/canonical.py`. Это два разных механизма для одной и той же целевой
-доменной модели, а не общий код-путь. Подробнее —
-[`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.10.
+Production-путь не использует `data/canonical.py`: официальные поля
+известны и читаются allowlist-loader'ами, а общее внутреннее
+представление — `CanonicalBatch`, в которое сходятся offline и runtime.
+`CanonicalMapping` остаётся generic offline-инструментом для прочих CSV.
 
 ## 10. Стратегия target/evaluation
 
-Организатор подтвердил метрику (MAE), но не семантику delay/horizon.
-`target/spec.py` даёт стабильную форму метаданных `TargetSpec` (name,
-unit, description, version, опциональный `horizon_minutes`), ничего не
-хардкодя — ни предполагаемого horizon, ни единицы измерения, ни названия.
-
-Реальное построение таргета (превращение сырых полей в колонку-label)
-намеренно не реализовано и будет построено fz сразу после публикации ТЗ.
+Target берётся из официальной разметки (`labels_*`), не строится заново;
+DIRECT и RESIDUAL — только преобразования обучающей цели и обратно.
+Model selection — на `labels_test`; validate — только для submission.
 
 ## 11. MAE baseline
 
-`evaluation/baseline.MedianBaselineRegressor` предсказывает медиану
-training-таргета, полностью игнорируя признаки. В сочетании с
-`evaluation/metrics.mae` это даёт baseline validation MAE в первые минуты
-после появления реального таргета — планку, которую обязана превзойти
-любая последующая модель.
+Воспроизведённые на `labels_test` baselines (Dataset Evidence v1 / M1):
+zero ≈ 103.34 с, train median ≈ 100.87 с, `cur_dev_s` ≈ 93.36 с.
 
 ## 12. Согласованность training/serving
 
-Критическое будущее правило: **одна и та же feature-логика должна
-использоваться offline и online.** Никогда не должно появиться второй,
-параллельной реализации feature-логики в ноутбуке или продублированной
-внутри FastAPI-сервиса. Как только `features/` получит реальное
-содержимое, и offline-обучение, и online-serving будут импортировать его
-из одного и того же места.
+Offline и runtime используют один канонический Feature Builder: при
+эквивалентном каноническом входном контексте путь построения признаков
+общий и детерминированный (проверено тестами и на реальных данных —
+побитово одинаковые признаки и прогноз из одного bundle). Это code-path
+parity, а не полная parity источников:
+
+- runtime `current_deviation_seconds` (point-in-time-safe) не идентичен
+  official `cur_dev_s` датасета;
+- CSV имеет шаг telemetry ~12–15 с, эмулятор может присылать ~1 Гц —
+  count-признаки (`rows_*`, `valid_gps_count_*`) могут быть смещены.
+
+Это modeling-риски до финальной модели; `tabular-v1` не меняется и молча не
+нормализуется.
 
 ## 13. Конфиденциальность данных / политика репозитория
 
 - Организаторские данные никогда не коммитятся и не публикуются.
-  `data/raw/`, `data/interim/`, `data/processed/` в `.gitignore`
-  (отслеживаются только README/`.gitkeep`).
-- Перед отправкой организаторских данных в любой внешний сервис,
-  инструмент или AI-ассистента — сначала свериться с правилами хакатона.
-- Код и метаданные (схема, hash, row count) отделены от confidential
-  сырых данных — см. `DatasetManifest`, который никогда не хранит
-  реальные строки.
-- Входящие serving-запросы — особенно `context` каждого vehicle, который
-  после старта хакатона будет нести организаторские данные — не должны
-  сбрасываться в логи. В логах допустима только метаданные (размер
-  батча, версия модели, тип ошибки, успех/неудача); сообщения исключений
-  и трассировки намеренно исключены, поскольку исключение predictor'а
-  само может содержать данные, производные от запроса. См.
-  [`ML_SERVING_CONTRACT.md`](ML_SERVING_CONTRACT.md) §6.
+  `data/raw/`, `data/interim/`, `data/processed/` в `.gitignore`.
+- Перед отправкой организаторских данных во внешний сервис — сверяться с
+  правилами хакатона.
+- Serving не логирует тела запросов (telemetry, контекст): только тип
+  события/исключения, число пакетов, версия модели. `422` санитизирован,
+  `500`/`503` — фиксированные сообщения.
+- Submission не пишется внутрь каталога официального датасета.
 
-## 14. Подтверждённые инварианты
+## 14. Инварианты
 
-- Официальная primary-метрика = MAE.
-- Точная семантика delay: TBD.
-- Точная семантика horizon: TBD.
-- Схема CSV: TBD.
-- Схема эмулятора: TBD.
-- Официальный mapping CSV ↔ emulator предоставят организаторы.
-- Основной online-источник телеметрии = организаторский Docker-эмулятор.
-- Node-backend владеет `VehicleState`, недавней телеметрией и scheduler'ом.
-- Python не должен дублировать операционный `VehicleState`.
-- Offline и online обязаны сойтись на совместимом каноническом доменном
-  представлении.
-- Один и тот же Feature Builder должен в итоге использоваться offline и
-  online.
-- Организаторские датасеты нельзя коммитить или публиковать.
-- Автобусы — текущая цель реализации; доменные имена остаются
-  transport-generic (`vehicle`/`route`/`trip`/`stop`).
-- Внешнее обогащение данных разрешено, но не входит в pre-hackathon
-  critical path.
-- Поле `context` в provisional serving-контракте намеренно непрозрачно и
-  будет заменено/ужесточено, как только появится официальный mapping
-  CSV ↔ emulator.
-- Python ML Service (`serving/`) не хранит operational-состояние между
-  запросами — ни `VehicleState`, ни историю по vehicle, ни состояние
-  scheduler'а; см. §3. Это не запрещает predictor'у держать в памяти
-  загруженный model-артефакт, статичные lookup-данные или объекты
-  препроцессинга между запросами — это обычная часть inference-сервиса,
-  а не нарушение инварианта.
+- Метрика — MAE; target, horizon и leakage-правила — см. §2.
+- `tabular-v1` заморожен; новые признаки — новой версией схемы.
+- Один Feature Builder для offline и runtime.
+- Runtime-время — только aware ISO-8601; внутри — naive UTC.
+- Модель загружается только из проверенного Artifact Bundle v1, после
+  проверки хешей, manifest'а, совместимости схемы, family и формулировки;
+  затем проверяется тип задачи модели (скалярная регрессия) — иначе `503`.
+- Wire: `speed` — всегда конечное число; producer не шлёт `event_time > T`.
+- Hidden validate target никогда не вычисляется; факт test schedule не
+  используется для validate.
+- Python не хранит `VehicleState` и не делает matching/scheduling.
 
-### Точки синхронизации интеграции
+## 15. Открытые вопросы (modeling/research, не инфраструктура)
 
-Точки, где работа fz, Valeria и Andrey обязана сойтись, в порядке
-актуальности:
+- Валидность группы B (train-only/synthetic-candidate) для обучения.
+- DIRECT vs RESIDUAL, режим обучения, финальный выбор модели.
+- Сдвиг распределения count-признаков из-за частоты telemetry и соответствие
+  исторических строк без навигационных полей runtime-пакетам.
+- Official `cur_dev_s` vs runtime `current_deviation_seconds` (см. §12).
 
-1. **ML Task Spec** — семантика target/horizon/metric, как только
-   опубликована.
-2. **Canonical Schema** — общее доменное представление offline и online.
-3. **Feature Contract** — общий интерфейс `features/`, который вызывают
-   и обучение, и serving.
-4. **Artifact Contract** — форма ML Artifact Bundle, которую загружает
-   serving-слой.
+## 16. Явные non-goals (для ML-части)
 
-## 15. TBD после публикации полного ТЗ
+- Backend-логика в ML-коде: NDTP, `VehicleState`, schedule/map matching,
+  scheduler, alerts, WebSocket, dashboard (это зона Backend/Frontend).
+- Вероятности задержки и reason — пока нет модели, `reason = null`.
+- PyTorch/ONNX model families (добавляются новой записью `MODEL_FAMILIES`).
+- MLflow, DVC, Airflow, Optuna/HPO-фреймворки.
+- Оркестрация (Compose/Kubernetes) в ML-части: у ML только минимальный
+  `Dockerfile` сервиса (artifact монтируется read-only); контейнеры
+  Backend/Frontend — зона Backend.
 
-- Реальные названия и типы колонок CSV.
-- Реальное определение delay/target и единица измерения.
-- Реальный prediction horizon.
-- Схема событий эмулятора и её mapping на схему CSV.
-- Нужны ли purge/embargo-окна или walk-forward CV для temporal evaluation
-  (зависит от horizon/leakage-характеристик реальных данных).
-- Набор признаков (Valeria, после появления таргета).
-- Выбор модели (Valeria).
-- Конкретная схема Artifact Bundle (Valeria).
+## 17. Где продолжать
 
-## 16. Явные non-goals (для этого репозитория)
-
-Намеренно не реализовано здесь:
-
-- Serving-реализация с реальной моделью: реальный feature engineering,
-  реальный инференс, загрузка артефакта/модельного файла. (Provisional
-  FastAPI-shell + `MockPredictor` уже существуют — см. §7 и
-  [`ML_SERVING_CONTRACT.md`](ML_SERVING_CONTRACT.md) — но модели за ними
-  нет.)
-- CatBoost/XGBoost/LightGBM или любой training pipeline.
-- Feature engineering или придуманный набор признаков.
-- Emulator-клиент или схема эмулятора.
-- Второе хранилище `VehicleState` или scheduler на Python.
-- PostgreSQL/Prisma, Redis, Kafka.
-- MLflow, DVC, Airflow/Prefect/Ray, Optuna/Hydra.
-- CI/CD, дашборды, Docker/Compose для этого репозитория.
-- Придуманный target, придуманные поля телеметрии, придуманная
-  каноническая схема.
-
-## 17. Чек-лист первого часа хакатона
-
-Как только опубликуют организаторский CSV и task spec:
-
-1. `uv run python scripts/inspect_csv.py --path <csv>` — первый взгляд на
-   схему, missing, дубликаты.
-2. Построить `DatasetManifest` для полученного файла (`data/manifest.py`).
-3. Определить реальный `CanonicalMapping` для организаторской CSV-схемы
-   (offline). Отдельно, не через `CanonicalMapping` — согласовать с
-   online-путём backend'а совместимую доменную семантику для эмулятора
-   через будущий Feature Contract (см. §9).
-4. Прочитать полный task spec; заполнить реальный `TargetSpec` и
-   реализовать построение таргета.
-5. Выбрать границы `train_end`/`validation_end`, запустить
-   `split_by_time_boundaries`.
-6. Обучить `MedianBaselineRegressor`, посчитать baseline MAE через
-   `mae()`, залогировать через `experiments/log.py`.
-7. Передать канонические данные + target + границы split'а Valeria для
-   feature/model-работы.
-8. Держать этот документ обновлённым по мере разрешения TBD.
-
-Подробный пошаговый план по фазам после публикации ТЗ —
+Рабочий цикл modeling → artifact → submission/serving —
 [`HACKATHON_RUNBOOK.md`](HACKATHON_RUNBOOK.md).

@@ -1,101 +1,91 @@
-# HACKATHON_RUNBOOK — что делать после публикации полного ТЗ
+# HACKATHON_RUNBOOK — рабочий цикл после закрытия инфраструктуры
 
-Это практический план действий, **не** speculative implementation plan.
-Ничего из шагов ниже не начинать до Phase 0. Не путать со
-статусом "TBD" в [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.3 —
-этот документ описывает *порядок действий*, когда TBD начнут разрешаться,
-а не угадывает их значения заранее.
+Хакатон длится **48 часов**: предпочитайте работающий end-to-end путь
+улучшению отдельного компонента.
 
-Хакатон длится **48 часов** — держите это в голове на каждой фазе:
-предпочитайте работающий baseline красивой архитектуре.
+## Что уже сделано (не переделывать)
 
-## Phase 0 — Freeze
+| Фаза | Результат | Checkpoint |
+|---|---|---|
+| Task spec / данные | семантика target, горизонт `(10, 15]`, MAE, свойства и утечки датасета доказаны | `dataset-evidence-v1` (92-ячеечная версия; см. `notebooks/fz/01_official_dataset_evidence.PROVENANCE.md`) |
+| Первая модель | безопасные loaders, `tabular-v1`, CatBoost, 6 заранее заданных экспериментов | `m1-tabular-baseline-v1` |
+| Паритет offline ↔ online | `CanonicalBatch`, один builder для обоих путей | `m2-i1-streaming-context-v1` |
+| Инфраструктура | aware-UTC Contract v1, ArtifactManifest, Artifact Bundle v1, `ArtifactPredictor`, `POST /api/v1/predict`, validate submission | M2 infrastructure closure |
 
-Не начинать писать код до фиксации Task Spec. Первое действие всей
-команды — прочитать официальные материалы целиком (task spec, схему CSV,
-описание эмулятора, mapping) и только потом планировать работу.
+## Цикл modeling → artifact → submission/serving
 
-## Phase 1 — ML Task Spec
+Любой кандидат, совместимый с `tabular-v1`, проходит один и тот же путь без
+изменения serving/адаптеров/loader'ов/submission:
 
-Вместе, всей командой, зафиксировать письменно:
+```python
+from datetime import UTC, datetime
+from mostransport_ml.artifacts.manifest import ArtifactManifest, EvaluationSummary
+from mostransport_ml.data.official import load_official_split, resolve_dataset_root
+from mostransport_ml.features.adapters import offline_context
+from mostransport_ml.features.context import build_features_from_context
+from mostransport_ml.inference.predictor import ArtifactPredictor, export_bundle
 
-- точное определение target (что такое "задержка" в терминах данных);
-- единицу измерения;
-- prediction horizon;
-- как именно считается MAE (какие строки участвуют, есть ли фильтрация,
-  агрегация по маршрутам/остановкам);
-- список CSV-файлов и их полей;
-- поля эмулятора;
-- официальный mapping CSV ↔ emulator fields.
+root = resolve_dataset_root()                      # $MOSTRANSPORT_DATASET
+train = load_official_split(root, "train")
+X = build_features_from_context(offline_context(train.points, train.telemetry, train.schedule_plan))
+# ... обучить модель на X (колонки ровно FEATURE_NAMES) и target (direct или residual) ...
 
-Обновить [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.2/§10.3: то,
-что было TBD, помечается ПОДТВЕРЖДЕНО ОРГАНИЗАТОРАМИ, что осталось
-неизвестным — остаётся TBD, не додумывается.
+manifest = ArtifactManifest(
+    artifact_schema_version="artifact-manifest-v1",
+    model_version="<уникальная версия>", model_family="catboost",
+    feature_schema_version="tabular-v1", target_formulation="residual",
+    train_regime="<режим>", model_params={...},
+    training_data_provenance={"data_version": "<fingerprint>"},
+    code_provenance={"git_commit": "<sha>"},
+    evaluation=EvaluationSummary(split="labels_test", metric="mae", value=..., n_rows=353),
+    created_at=datetime.now(UTC),
+)
+export_bundle("artifacts/<version>", model, manifest)   # manifest.json + model.cbm + bundle.json
+# model — обученный CatBoostRegressor (скалярная регрессия); классификатор/ранкер отклоняются
 
-## Phase 2 — Canonical Schema
+test = load_official_split(root, "test")
+predictor = ArtifactPredictor.load("artifacts/<version>")
+pred = predictor.predict(offline_context(test.points, test.telemetry, test.schedule_plan))
+```
 
-Sync fz + Valeria + Andrey: согласовать общее доменное представление
-(имена сущностей `vehicle`/`route`/`trip`/`stop` и их поля), в которое
-приводятся и организаторский CSV (через `CanonicalMapping`, offline), и
-online-путь backend'а (через будущий Feature Contract, не обязательно
-буквально тем же кодом — см. [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md)
-§10.10).
+Затем:
 
-## Phase 3 — Параллельная работа
+```bash
+uv run python scripts/make_submission.py --artifact-dir artifacts/<version> --output submission.csv
+MOSTRANSPORT_ARTIFACT_DIR=artifacts/<version> \
+  uv run uvicorn mostransport_ml.serving.artifact_app:create_app_from_env --factory
+```
 
-**fz:**
-- `uv run python scripts/inspect_csv.py` по реальному CSV;
-- построение реального `TargetSpec` и target-колонки;
-- temporal evaluation (`split_by_time_boundaries`);
-- median baseline (`MedianBaselineRegressor` + `mae()`), первый honest
-  baseline MAE в experiment log.
+Каталоги bundle и submission — вне официального датасета и не коммитятся
+вместе с организаторскими данными. `integration-fixture-v1`
+(`scripts/build_integration_artifact.py`) — **INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**: только для
+проверки интеграции с Backend, не кандидат. Для Backend
+смена модели = смена `MOSTRANSPORT_ARTIFACT_DIR`
+([BACKEND_ML_INTEGRATION.md](BACKEND_ML_INTEGRATION.md)).
 
-**Valeria:**
-- `FeatureBuilder` в `features/`;
-- модель;
-- Artifact Bundle поверх сегодняшнего `ArtifactMetadata`;
-- интеграция в `serving/` (замена `MockPredictor` на artifact-backed
-  predictor, без изменения HTTP-слоя).
+## Правила modeling-фазы
 
-**Andrey:**
-- интеграция с backend/emulator online-путём;
-- `PredictionService` + ML Client, вызывающий `POST /api/v1/predict/batch`.
+- `labels_test` — официальный local model-selection split; помнить об
+  ограничении temporal nearness (Dataset Evidence v1 §15).
+- Validate: только `validate/points.csv`, `validate/traffic.csv`,
+  `validate/schedule_plan.csv`; факт test schedule для validate запрещён.
+- Новые признаки → новая схема (например `tabular-v2`) рядом с
+  `tabular-v1`, не правка `tabular-v1`; bundle обязан указывать схему, под
+  которую обучен (совместимость проверяется при загрузке).
+- Открытый modeling debt (не инфраструктура; учесть до финальной модели):
+  - **`cur_dev_s` vs runtime `current_deviation_seconds`**: в runtime это
+    point-in-time-safe отклонение последнего подтверждённо пройденного
+    события (иначе `0`); official `cur_dev_s` в real-time один в один не
+    воспроизводится (в ~44–45% исследованных real/test случаев
+    соответствующее фактическое событие — после `T`). `cur_dev_s` — признак
+    `tabular-v1` и основа RESIDUAL, поэтому offline-оценка может быть
+    оптимистичнее runtime;
+  - **частота telemetry**: CSV ~12–15 с vs эмулятор ~1 Гц → count-признаки
+    (`rows_*`, `valid_gps_count_*`) могут быть смещены; telemetry молча не
+    прореживать;
+  - **валидность группы B** (train-only/synthetic-candidate);
+  - direct vs residual и финальный выбор модели.
 
-**Lisa:**
-- поддержка по БД/reference data.
-
-## Phase 4 — Первая реальная модель
-
-Сначала baseline (Phase 3, fz), потом — кандидат вроде CatBoost, если он
-подходит под реальные данные. **Не обещать заранее, что CatBoost будет
-финальным выбором** — решение зависит от реальных данных и оставшегося
-времени.
-
-## Phase 5 — Паритет offline → online
-
-Для одного и того же исторического момента offline-путь (обучение) и
-runtime-запрос (`PredictionBatchRequest`) обязаны давать эквивалентную
-feature-семантику и семантику прогноза. Это главная проверка на
-training-serving skew (см. [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md)
-§10.15) — без нее locally-хорошая offline-модель может оказаться
-бесполезной в проде.
-
-## Phase 6 — End-to-end MVP
-
-Только после того, как весь путь заработал целиком (Phase 5 пройдена):
-
-- HPO;
-- более богатые признаки;
-- внешние источники данных;
-- explainability;
-
-— и только если осталось время. Приоритет всегда у работающего
-end-to-end пути, а не у улучшения отдельного компонента.
-
----
-
-Везде, где на любой фазе встречается вопрос, ответ на который не был
-явно зафиксирован в Phase 1 — это TBD, а не место для предположения.
-Смотрите [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.3 и
-[`../AGENTS.md`](../AGENTS.md) — при неоднозначности в доменном решении
-AI-агент обязан остановиться и спросить, а не угадывать.
+При доменной неоднозначности, не закрытой официальным ТЗ или Dataset
+Evidence v1, AI-агент обязан остановиться и спросить, а не угадывать
+([`../AGENTS.md`](../AGENTS.md)).

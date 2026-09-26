@@ -1,7 +1,7 @@
 [project]
 name = "mostransport-ml"
 version = "0.1.0"
-description = "Mostransport hackathon: offline ML foundation (data/target/evaluation) plus a provisional ML serving foundation."
+description = "Mostransport hackathon ML: point-in-time tabular features, Artifact Bundle v1 models and the Backend -> ML Contract v1 inference service."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

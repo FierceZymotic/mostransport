@@ -1,42 +1,28 @@
-"""Детерминированный mock-predictor.
+"""Детерминированный mock-predictor для локальной интеграции (Contract v1).
 
-Существует для интеграции с backend/frontend и serving-тестов до
-появления реальной модели, и остаётся полезным после — как безопасная,
-не требующая зависимостей локальная fixture, а не одноразовый scaffolding.
-Никогда не читает transport-specific ключи из `context`, никогда не
-использует случайность, никогда не бросает исключение по собственной
-инициативе.
+Всегда готов, возвращает фиксированную задержку для каждой точки, не
+считает признаки и не использует случайность. Подключается только явно
+(`mock_app.py`); реальный путь — `artifact_app.py` (Artifact Bundle v1).
 """
 
 from __future__ import annotations
 
-from mostransport_ml.serving.schemas import PredictionBatchRequest, PredictionStatus
-from mostransport_ml.serving.service import RawPrediction
+from mostransport_ml.features.context import CanonicalBatch
 
-MOCK_MODEL_VERSION = "mock-v0"
+MOCK_MODEL_VERSION = "mock-v1"
+MOCK_FEATURE_SCHEMA_VERSION = "mock"
 MOCK_PREDICTED_DELAY = 0.0
 
 
 class MockPredictor:
-    """Всегда готовый predictor, возвращающий фиксированную задержку для
-    каждого vehicle.
-
-    Должен подключаться только явно (см. `mock_app.py`) — ничто в
-    `serving/app.py` не выбирает его по умолчанию.
-    """
-
     def is_ready(self) -> bool:
         return True
 
     def model_version(self) -> str:
         return MOCK_MODEL_VERSION
 
-    def predict_batch(self, request: PredictionBatchRequest) -> list[RawPrediction]:
-        return [
-            RawPrediction(
-                vehicle_id=vehicle.vehicle_id,
-                predicted_delay=MOCK_PREDICTED_DELAY,
-                status=PredictionStatus.OK,
-            )
-            for vehicle in request.vehicles
-        ]
+    def feature_schema_version(self) -> str:
+        return MOCK_FEATURE_SCHEMA_VERSION
+
+    def predict(self, batch: CanonicalBatch) -> list[float]:
+        return [MOCK_PREDICTED_DELAY for _ in batch.points]

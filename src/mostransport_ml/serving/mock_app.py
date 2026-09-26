@@ -1,4 +1,4 @@
-"""Explicit development app, подключённое к `MockPredictor`.
+"""Explicit development app, подключённое к `MockPredictor` (Contract v1, delay=0).
 
 Запуск:
 

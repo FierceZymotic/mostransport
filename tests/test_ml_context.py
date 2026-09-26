@@ -81,6 +81,11 @@ def offline_frames(packets, *, horizon_min=12.0, cur_dev=45.0, manual_fill=True)
     return points, telemetry, plan
 
 
+def iso_utc(ts: pd.Timestamp) -> str:
+    """Contract v1: aware ISO-8601 UTC с `Z` (naive-время тестов = UTC wall-clock)."""
+    return ts.tz_localize("UTC").isoformat().replace("+00:00", "Z")
+
+
 def _json_number(value):
     return None if value is None or (isinstance(value, float) and math.isnan(value)) else value
 
@@ -88,11 +93,11 @@ def _json_number(value):
 def runtime_request(packets, *, horizon_min=12.0, cur_dev=45.0, manual_fill=True):
     return {
         "request_id": "p1",
-        "prediction_time": T.isoformat(),
+        "prediction_time": iso_utc(T),
         "vehicle_context": {"unit_id": "u-17", "tr_id": str(TR_ID), "route_id": "r-42"},
         "schedule_context": {
             "target_action_id": str(TARGET_ACTION),
-            "target_time_begin": (T + pd.Timedelta(minutes=horizon_min)).isoformat(),
+            "target_time_begin": iso_utc(T + pd.Timedelta(minutes=horizon_min)),
             "target_lat": TARGET_LAT,
             "target_lon": TARGET_LON,
             "current_deviation_seconds": cur_dev,
@@ -100,7 +105,7 @@ def runtime_request(packets, *, horizon_min=12.0, cur_dev=45.0, manual_fill=True
         },
         "telemetry": [
             {
-                "event_time": p["event_time"].isoformat(),
+                "event_time": iso_utc(p["event_time"]),
                 "location_valid": p["location_valid"],
                 "lat": _json_number(p["lat"]),
                 "lon": _json_number(p["lon"]),
@@ -304,8 +309,8 @@ def test_missing_required_context_fails(path):
     [
         (("request_id",), ""),
         (("prediction_time",), "yesterday"),
-        (("prediction_time",), "2026-01-06T10:00:00+03:00"),
-        (("prediction_time",), "2026-01-06T10:00:00Z"),
+        (("prediction_time",), "2026-01-06T10:00:00"),
+        (("schedule_context", "target_time_begin"), "2026-01-06T10:12:00"),
         (("vehicle_context", "tr_id"), 501),
         (("schedule_context", "target_lat"), None),
         (("schedule_context", "target_lat"), 95.0),
@@ -315,7 +320,7 @@ def test_missing_required_context_fails(path):
         (("schedule_context", "current_deviation_seconds"), True),
         (("schedule_context", "manual_fill"), None),
         (("schedule_context", "manual_fill"), "true"),
-        (("telemetry",), {"event_time": "2026-01-06T09:59:00"}),
+        (("telemetry",), {"event_time": "2026-01-06T09:59:00Z"}),
     ],
 )
 def test_malformed_context_fails(path, value):
@@ -327,7 +332,7 @@ def test_malformed_context_fails(path, value):
     ("field", "value"),
     [
         ("event_time", None),
-        ("event_time", "2026-01-06T09:59:00Z"),
+        ("event_time", "2026-01-06T09:59:00"),
         ("location_valid", "yes"),
         ("lat", "55.7"),
         ("speed", float("inf")),

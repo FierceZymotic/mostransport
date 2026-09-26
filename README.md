@@ -1,85 +1,98 @@
 # mostransport-ml
 
-ML-часть хакатона Мостранспорта: раннее прогнозирование задержек
-наземного городского транспорта. Официальная метрика — MAE фактической
-задержки. Проект — offline-инструментарий fz (`data → target →
-evaluation correctness`) плюс provisional serving-фундамент Valeria
-(`features → model → serving`), собранный заранее, чтобы не блокировать
-интеграцию с backend'ом на ожидании реальной модели.
+ML-часть хакатона Мостранспорта: раннее прогнозирование задержки прибытия
+наземного транспорта. Точка прогноза — `(tr_id, T)`; target —
+`target_delay_s = time_fact_begin − time_begin` (секунды, `+` опоздание,
+`−` опережение) на целевом действии расписания в горизонте `(T+10м, T+15м]`.
+Официальная метрика — MAE.
 
-Это не runtime backend — тот живёт в отдельном репозитории
-(`/home/fz/projects/backend`, NestJS/TypeScript), доступен отсюда только
-READ-ONLY. Подробнее о границе — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §5.
+Сейчас репозиторий содержит рабочую ML-часть и становится начальной
+основой общего командного репозитория: Backend и Frontend будут добавлены
+в этот же репозиторий на верхнем уровне (рядом с текущей структурой; ML не
+переносится). Пока их здесь нет. Граница: Backend присылает доменные факты +
+сырую историю telemetry по Backend → ML Contract v1, ML считает
+model-specific признаки и прогноз. Подробнее —
+[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+
+**Статус:** ML-инфраструктура готова (Contract v1 согласован и заморожен,
+serving, Artifact Bundle, validate submission). Финальная модель **не
+выбрана**: `integration-fixture-v1` — синтетический fixture только для
+проверки интеграции, не модель качества.
 
 ## С чего начать чтение
 
 1. **README** (этот файл) — быстрый вход и команды.
 2. [`docs/PROJECT_KNOWLEDGE.md`](docs/PROJECT_KNOWLEDGE.md) — главная база
-   знаний: назначение, ownership, TBD, модули, зависимости.
+   знаний: факты, ownership, модули, инварианты.
 3. [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — технические границы,
    диаграммы, инварианты.
-4. [`docs/ML_SERVING_CONTRACT.md`](docs/ML_SERVING_CONTRACT.md) — точный
-   HTTP-контракт serving-слоя.
-5. [`docs/HACKATHON_RUNBOOK.md`](docs/HACKATHON_RUNBOOK.md) — что делать
-   после публикации официального ТЗ.
+4. [`docs/BACKEND_ML_INTEGRATION.md`](docs/BACKEND_ML_INTEGRATION.md) — Backend →
+   ML Contract v1 (`POST /api/v1/predict`): канонический контракт и его
+   семантика, quickstart, handoff для Backend. Карта реализации —
+   [`docs/ML_SERVING_CONTRACT.md`](docs/ML_SERVING_CONTRACT.md).
+5. [`docs/HACKATHON_RUNBOOK.md`](docs/HACKATHON_RUNBOOK.md) — рабочий цикл
+   modeling → artifact → submission/serving.
 
 Для AI coding agents — сначала [`AGENTS.md`](AGENTS.md).
 
-## Что уже реализовано
+## Что реализовано (замороженные checkpoint'ы)
 
-- **Offline (fz)**: schema-agnostic инспекция CSV (`inspect_csv.py`),
-  `DatasetManifest` (метаданные воспроизводимости, никогда не сырые
-  строки), `CanonicalMapping` (явный rename/required-field механизм),
-  `TargetSpec`, строго хронологический `split_by_time_boundaries`,
-  `mae()`, `MedianBaselineRegressor`, `ExperimentLogger`.
-- **Serving (Valeria, provisional)**: FastAPI-shell (`GET /health`,
-  `GET /ready`, `POST /api/v1/predict/batch`), детерминированный
-  `MockPredictor`, runtime-проверяемый контракт `Predictor` (readiness,
-  защита от мутации запроса), санитизированные ошибки, минимальный
-  `ArtifactMetadata`.
+- **Dataset Evidence v1** (`dataset-evidence-v1`) — доказательный аудит
+  официального датасета (`notebooks/fz/`). Тег содержит 92-ячеечную версию
+  notebook, не исторический 94-ячеечный артефакт `9eb2c78b…` — см.
+  `notebooks/fz/01_official_dataset_evidence.PROVENANCE.md`.
+- **M1** (`m1-tabular-baseline-v1`) — безопасные official loaders,
+  point-in-time Feature Builder `tabular-v1` (37 признаков, `event_time <= T`,
+  окна `(T-w, T]`, strict GPS), CatBoost baseline, 6 заранее заданных
+  экспериментов (`scripts/run_offline_baseline.py`).
+- **M2-I1** (`m2-i1-streaming-context-v1`) — канонический ML-контекст
+  (`CanonicalBatch`) и offline/runtime адаптеры в один и тот же builder.
+- **M2 infrastructure** — aware-UTC timestamps Contract v1,
+  `ArtifactManifest` v1, Artifact Bundle v1, `ArtifactPredictor`,
+  serving `POST /api/v1/predict`, безопасный validate inference и
+  `scripts/make_submission.py`.
 
-## Что ещё не реализовано
-
-Реальный target, реальные признаки, реальная модель, реальный Artifact
-Bundle, реальный predictor — всё это ждёт публикации официального ТЗ
-организаторов. Полный список non-goals —
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §16.
-
-## Роли fz и Valeria
-
-fz владеет offline-корректностью данных/таргета/оценки; Valeria — общим
-Feature Builder, моделью и serving-слоем. Полная таблица ownership,
-включая Andrey и Lisa — [`docs/PROJECT_KNOWLEDGE.md`](docs/PROJECT_KNOWLEDGE.md) §10.4.
+Не реализовано и вне ML-инфраструктуры: выбор финальной модели,
+исследование признаков/режимов обучения, probability/reason, Backend/Frontend.
 
 ## Быстрый старт: offline
 
+Из корня клонированного репозитория:
+
 ```bash
-cd /home/fz/projects/mostransport-ml
 uv sync --extra dev
+export MOSTRANSPORT_DATASET=/path/to/official/dataset
 uv run python scripts/smoke_offline.py
-uv run python scripts/inspect_csv.py --path data/raw/organizer.csv
+uv run python scripts/make_submission.py --artifact-dir <bundle> --output submission.csv
 ```
 
 ## Быстрый старт: serving
 
 ```bash
 uv sync --extra dev --extra serving
-uv run uvicorn mostransport_ml.serving.mock_app:app --host 127.0.0.1 --port 8000
+# integration-only artifact (INTEGRATION TEST ONLY, NOT FOR SUBMISSION, NOT A QUALITY MODEL):
+uv run python scripts/build_integration_artifact.py \
+  --output /tmp/mostransport-integration-artifact --replace
+MOSTRANSPORT_ARTIFACT_DIR=/tmp/mostransport-integration-artifact \
+  uv run uvicorn mostransport_ml.serving.artifact_app:create_app_from_env --factory
+uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000
 ```
 
-Затем: `GET http://127.0.0.1:8000/health`, `/ready`, `/docs`.
+Настоящая модель подключается заменой `MOSTRANSPORT_ARTIFACT_DIR` на её
+Artifact Bundle v1. Затем: `GET /health`, `GET /ready`, `POST /api/v1/predict`,
+`/docs`, `/openapi.json`. Минимальный образ — `Dockerfile`; подробности —
+[`docs/BACKEND_ML_INTEGRATION.md`](docs/BACKEND_ML_INTEGRATION.md).
 
 ## Тесты
 
 ```bash
 uv sync --extra dev --extra serving   # обязателен для полного набора тестов
 uv run pytest -q
-uv run ruff check .
+uv run ruff check src scripts tests
 ```
 
 ## Куда идти за подробностями
 
 Все команды и нюансы (proxy в WSL, гигиена данных, git) —
 [`docs/DEVELOPMENT.md`](docs/DEVELOPMENT.md). Про данные организаторов —
-[`data/README.md`](data/README.md) и
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) §13.
+[`data/README.md`](data/README.md).

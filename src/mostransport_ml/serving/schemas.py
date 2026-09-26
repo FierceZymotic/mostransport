@@ -1,111 +1,147 @@
-"""External API DTO для provisional ML serving contract.
+"""Backend → ML Contract v1: DTO запроса/ответа `POST /api/v1/predict`.
 
-ЭТО PROVISIONAL PRE-HACKATHON CONTRACT — полное описание в
-docs/ML_SERVING_CONTRACT.md. Официального mapping CSV ↔ emulator fields
-пока не существует, поэтому `VehicleRequest.context` — намеренно
-непрозрачный JSON-объект. Ничто в этом модуле не предполагает реального
-transport-поля (никаких lat/lon/speed/route_id и т.п.) — они появятся
-только после публикации официального mapping, и тогда `context` будет
-заменён или ужесточён в реальную domain-схему.
+Единственная активная схема инференса (provisional v0 batch/`context`
+удалена). Только DTO и контрактные проверки входа — никаких признаков,
+вызовов predictor'а или доменной логики Backend'а.
 
-Этот модуль содержит только DTO — никакой inference-логики, никаких
-вызовов predictor'а.
+Время: только timezone-aware ISO-8601 строки (предпочтительно `...Z`);
+naive-время неоднозначно и отклоняется. Внутри ML время приводится к naive
+UTC (так представлены официальные данные) runtime-адаптером.
 """
 
 from __future__ import annotations
 
-from datetime import datetime
-from enum import StrEnum
-from typing import Annotated, Any
+from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    AwareDatetime,
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictStr,
+    model_validator,
+)
 
-# Обычный float, отклоняющий NaN/+Infinity/-Infinity, чтобы нефинитное
-# значение никогда не попало в сериализованный ответ (см. §6 контракта).
+from mostransport_ml.features.schema import (
+    FORBIDDEN_INPUT_COLUMNS,
+    HORIZON_MAX_INCLUSIVE_MINUTES,
+    HORIZON_MIN_EXCLUSIVE_MINUTES,
+)
+
+
+def _require_iso_string(value: Any) -> Any:
+    if not isinstance(value, str):
+        raise ValueError("must be an ISO-8601 datetime string")
+    return value
+
+
+ContractDatetime = Annotated[AwareDatetime, BeforeValidator(_require_iso_string)]
+NonEmptyStr = Annotated[StrictStr, Field(min_length=1)]
+FiniteNumber = Annotated[float, Field(strict=True, allow_inf_nan=False)]
+Latitude = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=-90, le=90)]
+Longitude = Annotated[float, Field(strict=True, allow_inf_nan=False, ge=-180, le=180)]
 FiniteFloat = Annotated[float, Field(allow_inf_nan=False)]
 
-# У horizon_minutes пока нет известной верхней границы или значения по
-# умолчанию, но horizon никогда не может быть нулевым, отрицательным или
-# нефинитным — это generic-инвариант, а не догадка о реальном horizon
-# организаторов.
-PositiveFiniteMinutes = Annotated[float, Field(gt=0, allow_inf_nan=False)]
+
+class VehicleContextV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    unit_id: NonEmptyStr
+    tr_id: NonEmptyStr
+    route_id: NonEmptyStr
 
 
-class PredictionStatus(StrEnum):
-    """Исход попытки прогноза для одного vehicle."""
+class ScheduleContextV1(BaseModel):
+    """Доменные факты Backend'а о целевом плановом событии."""
 
-    OK = "ok"
-    INSUFFICIENT_DATA = "insufficient_data"
-    ERROR = "error"
+    model_config = ConfigDict(extra="forbid")
+
+    target_action_id: NonEmptyStr
+    target_time_begin: ContractDatetime
+    target_lat: Latitude
+    target_lon: Longitude
+    current_deviation_seconds: FiniteNumber
+    manual_fill: StrictBool
 
 
-class VehicleRequest(BaseModel):
-    """Provisional inference-вход для одного vehicle.
+class TelemetryPacketV1(BaseModel):
+    """Сырой telemetry-пакет (G6CellNav00: timestamp/latitude/longitude/locationValid/speedAvg).
 
-    `context` намеренно непрозрачен: ни `MockPredictor`, ни эта схема
-    никогда не интерпретируют его ключи. Существует только чтобы
-    разблокировать HTTP-интеграцию до появления официальной схемы.
+    Все поля обязательны. `speed` (= `speedAvg`) — всегда конечное число: это
+    wire-инвариант Contract v1 (Backend всегда присылает числовую скорость).
+    `lat`/`lon`/`location_valid` могут быть `null` (нет GPS — реальное
+    состояние). Дополнительные сырые поля (например `heading`) допускаются и
+    игнорируются моделью, кроме запрещённых factual/target-имён.
+
+    Внутренний канонический контекст (`features/`) остаётся общим и допускает
+    отсутствующую скорость исторических данных; ужесточение — только здесь,
+    на HTTP-границе.
     """
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="allow")
 
-    vehicle_id: str
-    context: dict[str, Any]
-
-
-class PredictionBatchRequest(BaseModel):
-    """Конверт запроса для `POST /api/v1/predict/batch` (provisional v0)."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    prediction_time: datetime
-    horizon_minutes: PositiveFiniteMinutes | None = None
-    vehicles: list[VehicleRequest] = Field(min_length=1)
-
-
-class VehiclePrediction(BaseModel):
-    """Результат прогноза для одного vehicle.
-
-    Инвариант проверяется здесь, а не просто ожидается от вызывающих:
-    `status == "ok"` тогда и только тогда, когда присутствует конечный
-    `predicted_delay`; любой другой status вообще не несёт delay.
-    Нефинитный output predictor'а никогда не должен дойти до клиента (см.
-    `serving/service.py`).
-    """
-
-    model_config = ConfigDict(extra="forbid")
-
-    vehicle_id: str
-    predicted_delay: FiniteFloat | None = None
-    status: PredictionStatus
+    event_time: ContractDatetime
+    lat: FiniteNumber | None
+    lon: FiniteNumber | None
+    location_valid: StrictBool | None
+    speed: FiniteNumber
 
     @model_validator(mode="after")
-    def _check_status_delay_invariant(self) -> VehiclePrediction:
-        if self.status == PredictionStatus.OK:
-            if self.predicted_delay is None:
-                raise ValueError("predicted_delay is required when status is 'ok'")
-        elif self.predicted_delay is not None:
-            raise ValueError(f"predicted_delay must be None when status is {self.status.value!r}")
+    def _reject_forbidden_fields(self) -> TelemetryPacketV1:
+        if FORBIDDEN_INPUT_COLUMNS & set(self.model_extra or {}):
+            raise ValueError("telemetry packet contains forbidden factual/target fields")
         return self
 
 
-class PredictionBatchResponse(BaseModel):
-    """Конверт ответа для `POST /api/v1/predict/batch` (provisional v0).
+class PredictRequestV1(BaseModel):
+    """Одна prediction point `(tr_id, T)` с историей telemetry.
 
-    Строится вокруг численной задержки (подтверждённая официальная
-    метрика — MAE фактической задержки), а не вероятности классификации.
-    `target_unit` опционален, поскольку единицы измерения организаторами
-    ещё не определены.
+    История: все пакеты в `(T-15m, T]` + последний пакет `<= T` + последний
+    strict-valid GPS пакет `<= T` (якоря могут быть старше окна). Пакеты
+    `> T` не влияют на прогноз.
     """
 
     model_config = ConfigDict(extra="forbid")
 
-    prediction_time: datetime
-    horizon_minutes: PositiveFiniteMinutes | None = None
+    request_id: NonEmptyStr
+    prediction_time: ContractDatetime
+    vehicle_context: VehicleContextV1
+    schedule_context: ScheduleContextV1
+    telemetry: list[TelemetryPacketV1]
+
+    @model_validator(mode="after")
+    def _check_horizon(self) -> PredictRequestV1:
+        minutes = (
+            self.schedule_context.target_time_begin - self.prediction_time
+        ).total_seconds() / 60.0
+        if not HORIZON_MIN_EXCLUSIVE_MINUTES < minutes <= HORIZON_MAX_INCLUSIVE_MINUTES:
+            raise ValueError(
+                "target_time_begin must be within (10, 15] minutes after prediction_time"
+            )
+        return self
+
+
+class PredictionV1(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    delay_seconds: FiniteFloat
+    target_time: AwareDatetime
+    reason: None = None
+
+
+class PredictResponseV1(BaseModel):
+    """Успешный ответ. `prediction.target_time = target_time_begin + delay_seconds`."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    request_id: str
+    status: Literal["success"] = "success"
+    prediction: PredictionV1
+    generated_at: AwareDatetime
     model_version: str
-    target_name: str | None = None
-    target_unit: str | None = None
-    predictions: list[VehiclePrediction]
+    feature_schema_version: str
 
 
 class HealthResponse(BaseModel):
@@ -117,23 +153,17 @@ class HealthResponse(BaseModel):
 
 
 class ReadyResponse(BaseModel):
-    """`GET /ready` — готовность predictor'а/рантайма."""
+    """`GET /ready` — готовность predictor'а/artifact."""
 
     model_config = ConfigDict(extra="forbid")
 
     ready: bool
     model_version: str | None = None
+    feature_schema_version: str | None = None
 
 
 class ErrorDetail(BaseModel):
-    """Одна санитизированная запись ошибки валидации.
-
-    Намеренно уже, чем стандартная форма ошибки FastAPI/Pydantic: без
-    `input` (проблемного значения) и без `ctx`, поскольку данные запроса
-    — включая `context` vehicle — никогда не должны эхом возвращаться
-    клиенту. Сегменты `loc`, не являющиеся известным именем поля,
-    заменяются — см. sanitizer в `serving/app.py`.
-    """
+    """Одна санитизированная ошибка валидации: без `input`/`ctx`, `loc` санитизирован."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -143,9 +173,7 @@ class ErrorDetail(BaseModel):
 
 
 class ValidationErrorResponse(BaseModel):
-    """Реальная форма тела `422`, которую возвращает validation-error
-    handler этого сервиса — используется и для построения самого ответа,
-    и для его документирования в OpenAPI, поэтому они не могут разойтись."""
+    """Реальная форма тела `422` этого сервиса (она же в OpenAPI)."""
 
     model_config = ConfigDict(extra="forbid")
 
@@ -153,9 +181,7 @@ class ValidationErrorResponse(BaseModel):
 
 
 class ErrorResponse(BaseModel):
-    """Generic безопасное тело ошибки для ответов `500`/`503`: короткое,
-    фиксированное, не-чувствительное сообщение — никогда сообщение
-    исключения или traceback."""
+    """Безопасное тело `500`/`503`: фиксированное сообщение, без исключений/traceback."""
 
     model_config = ConfigDict(extra="forbid")
 

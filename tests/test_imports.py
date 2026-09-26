@@ -23,6 +23,21 @@ MODULES = [
     "mostransport_ml.models",
     "mostransport_ml.artifacts",
     "mostransport_ml.serving",
+    "mostransport_ml.data.official",
+    "mostransport_ml.features.builder",
+    "mostransport_ml.features.context",
+    "mostransport_ml.features.adapters",
+    "mostransport_ml.artifacts.manifest",
+    "mostransport_ml.artifacts.bundle",
+    "mostransport_ml.inference",
+    "mostransport_ml.inference.model_families",
+    "mostransport_ml.inference.predictor",
+    "mostransport_ml.inference.submission",
+    "mostransport_ml.serving.schemas",
+    "mostransport_ml.serving.service",
+    "mostransport_ml.serving.app",
+    "mostransport_ml.serving.mock_app",
+    "mostransport_ml.serving.artifact_app",
 ]
 
 

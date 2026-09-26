@@ -10,7 +10,10 @@ Leakage-гарантии, обеспечиваемые именно здесь:
   `usecols` — `time_fact_begin` физически не попадает в память;
 - target (`target_delay_s`) отделяется от prediction points и
   возвращается отдельной Series; `target_class` не читается вовсе;
-- для validate нет никакого loader'а: M1 не читает файлы validate;
+- modeling-loader'ы (train/test) не читают файлы validate; для validate есть
+  отдельный inference-only loader (`load_validate_inputs`): points без target,
+  telemetry и только `validate/schedule_plan.csv` (плановый allowlist) —
+  факт test schedule к validate никогда не подключается;
 - structural real-набор `tr_id` берётся из плановых полей официального
   test schedule (тем же allowlist-loader'ом);
 - fingerprint schedule для provenance строится только по плановому
@@ -75,6 +78,18 @@ _SPLIT_FILES: dict[str, dict[str, str]] = {
         "schedule": "test/schedule.csv",
     },
 }
+
+
+VALIDATE_FILES: dict[str, str] = {
+    "points": "validate/points.csv",
+    "telemetry": "validate/traffic.csv",
+    "schedule": "validate/schedule_plan.csv",
+}
+SAMPLE_SUBMISSION = "sample_submission.csv"
+SUBMISSION_COLUMNS: tuple[str, ...] = ("sample_id", "prediction")
+
+# Колонки, наличие которых в validate/points.csv означало бы утечку target.
+_VALIDATE_POINT_FORBIDDEN = frozenset({TARGET_COLUMN, "target_class", "time_fact_begin"})
 
 
 class OfficialDataSchemaError(ValueError):
@@ -221,3 +236,55 @@ def load_shared_real_vehicle_ids(root: str | Path) -> frozenset[int]:
     """
     plan = load_schedule_plan(Path(root) / _SPLIT_FILES["test"]["schedule"])
     return frozenset(int(v) for v in plan["tr_id"].unique())
+
+
+@dataclass(frozen=True)
+class OfficialValidateInputs:
+    """Входы validate для inference: target отсутствует по построению.
+
+    `points` — `POINT_COLUMNS`; `telemetry` — `TELEMETRY_COLUMNS`;
+    `schedule_plan` — плановый allowlist из `validate/schedule_plan.csv`.
+    """
+
+    points: pd.DataFrame
+    telemetry: pd.DataFrame
+    schedule_plan: pd.DataFrame
+
+
+def load_prediction_points(path: Path) -> pd.DataFrame:
+    """Prediction points без target (validate). Target-колонки в файле — ошибка."""
+    _require_columns(path, POINT_COLUMNS)
+    header = set(pd.read_csv(path, nrows=0).columns)
+    leaked = sorted(header & _VALIDATE_POINT_FORBIDDEN)
+    if leaked:
+        raise OfficialDataSchemaError(path, [f"unexpected target columns {leaked}"], sorted(header))
+    points = pd.read_csv(path, usecols=list(POINT_COLUMNS), dtype={"sample_id": str})
+    points["T"] = _as_ns(points["T"])
+    points["target_time_begin"] = _as_ns(points["target_time_begin"])
+    if points["sample_id"].duplicated().any():
+        raise ValueError(f"{path}: sample_id is not unique")
+    return points[list(POINT_COLUMNS)].reset_index(drop=True)
+
+
+def load_validate_inputs(root: str | Path) -> OfficialValidateInputs:
+    """Только `validate/points.csv`, `validate/traffic.csv`, `validate/schedule_plan.csv`."""
+    root = Path(root)
+    return OfficialValidateInputs(
+        points=load_prediction_points(root / VALIDATE_FILES["points"]),
+        telemetry=load_telemetry(root / VALIDATE_FILES["telemetry"]),
+        schedule_plan=load_schedule_plan(root / VALIDATE_FILES["schedule"]),
+    )
+
+
+def load_sample_submission_ids(root: str | Path) -> tuple[str, ...]:
+    """`sample_id` шаблона submission в его порядке; формат `sample_id;prediction`."""
+    path = Path(root) / SAMPLE_SUBMISSION
+    if not path.is_file():
+        raise FileNotFoundError(f"Official dataset file not found: {path}")
+    header = pd.read_csv(path, sep=";", nrows=0).columns.tolist()
+    if tuple(header) != SUBMISSION_COLUMNS:
+        raise OfficialDataSchemaError(path, list(SUBMISSION_COLUMNS), header)
+    ids = pd.read_csv(path, sep=";", usecols=["sample_id"], dtype={"sample_id": str})["sample_id"]
+    if ids.isna().any() or ids.duplicated().any():
+        raise ValueError(f"{path}: sample_id must be present and unique")
+    return tuple(ids.tolist())

@@ -1,7 +1,9 @@
 # DEVELOPMENT — практическое руководство разработчика
 
-Команды и workflow для работы с этим репозиторием. Не описывает backend
-Андрея — только `mostransport-ml`. Общая картина проекта — в
+Команды и workflow для ML-части репозитория (Python). Backend/Frontend,
+когда будут добавлены в репозиторий, описываются своими документами. Все
+команды ниже выполняются из корня клонированного репозитория. Общая картина
+проекта — в
 [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md), технические границы — в
 [`ARCHITECTURE.md`](ARCHITECTURE.md).
 
@@ -10,32 +12,28 @@
 - **OS**: Windows 11 + WSL2, дистрибутив Ubuntu.
 - **Python**: 3.12 (см. `.python-version`).
 - **Менеджер пакетов**: [`uv`](https://docs.astral.sh/uv/).
-- **Путь репозитория**: `/home/fz/projects/mostransport-ml`. Репозиторий
-  должен жить именно под `/home/fz/projects`, а не под `/mnt/c/...` — путь
-  в Windows-файловой системе через WSL9p делает файловые операции (в
-  частности `uv sync` и pytest) заметно медленнее и иногда ломает
-  file-watcher'ы. Держите репозиторий на Linux-файловой системе WSL.
-- Backend Андрея — отдельный репозиторий, `/home/fz/projects/backend`.
-  Для работы над `mostransport-ml` он не нужен; см. ниже, если нужно
-  свериться с его текущим состоянием.
+- **Где держать клон**: на Linux-файловой системе WSL (например в `~/...`),
+  а не под `/mnt/c/...` — путь в Windows-файловой системе через WSL9p делает
+  файловые операции (в частности `uv sync` и pytest) заметно медленнее и
+  иногда ломает file-watcher'ы.
 
 ## Offline-only workflow
 
-Только зона fz: `data/`, `target/`, `evaluation/`, `experiments/`. Лёгкий
-набор зависимостей, без FastAPI/pydantic/uvicorn.
+Offline/research-работа (loaders, признаки, обучение, bundle, submission)
+без FastAPI/pydantic/uvicorn.
 
 ```bash
-cd /home/fz/projects/mostransport-ml
 uv sync --extra dev
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check src scripts tests
+uv run ruff format --check src scripts tests
 uv run python scripts/smoke_offline.py
 ```
 
 **`uv sync --extra dev` (без `--extra serving`) не даёт запустить полный
-`pytest -q`** — `tests/test_serving_*.py` импортируют `fastapi`, которого
-в этом наборе зависимостей нет, и pytest падает уже на сборе тестов, до
-того как выполнится хоть один test (см. ниже про full-workflow).
+`pytest -q`** — serving/E2E/handoff-тесты (`tests/test_serving_contract_v1.py`,
+`tests/test_e2e_infrastructure.py`, `tests/test_integration_handoff.py` и др.)
+импортируют `fastapi`, которого в этом наборе зависимостей нет, и pytest
+падает уже на сборе тестов (см. ниже про full-workflow).
 
 Осмотр реального CSV, как только он появится:
 
@@ -50,16 +48,23 @@ uv run python scripts/inspect_csv.py --path data/raw/organizer.csv \
 Нужен для serving-разработки и для полного тестового прогона.
 
 ```bash
-cd /home/fz/projects/mostransport-ml
 uv sync --extra dev --extra serving
 uv run pytest -q
-uv run ruff check .
-uv run ruff format --check .
+uv run ruff check src scripts tests
+uv run ruff format --check src scripts tests
 uv run python scripts/smoke_offline.py
 uv run python scripts/inspect_csv.py --help
 ```
 
-Запуск mock-сервера (явно, без скрытого default-to-mock):
+Запуск сервера с реальной моделью из Artifact Bundle v1 (production-путь):
+
+```bash
+MOSTRANSPORT_ARTIFACT_DIR=<bundle> \
+  uv run uvicorn mostransport_ml.serving.artifact_app:create_app_from_env --factory \
+  --host 127.0.0.1 --port 8000
+```
+
+Или mock для интеграции (явно, delay = 0):
 
 ```bash
 uv run uvicorn mostransport_ml.serving.mock_app:app --host 127.0.0.1 --port 8000
@@ -70,9 +75,9 @@ uv run uvicorn mostransport_ml.serving.mock_app:app --host 127.0.0.1 --port 8000
 ```bash
 curl http://127.0.0.1:8000/health
 curl http://127.0.0.1:8000/ready
-curl -X POST http://127.0.0.1:8000/api/v1/predict/batch \
+curl -X POST http://127.0.0.1:8000/api/v1/predict \
   -H 'Content-Type: application/json' \
-  -d '{"prediction_time":"2026-01-01T00:00:00Z","vehicles":[{"vehicle_id":"synthetic-1","context":{}}]}'
+  -d @tests/fixtures/contract_v1_request.json
 ```
 
 Интерактивная документация — `http://127.0.0.1:8000/docs`, JSON-схема —
@@ -102,22 +107,29 @@ curl --noproxy '*' http://127.0.0.1:8000/health
 
 ```bash
 uv run pytest -q                          # весь набор (нужен --extra serving)
-uv run pytest tests/test_serving_errors.py -q   # один файл
-uv run pytest -k "mutation" -q                  # по подстроке имени теста
+uv run pytest tests/test_serving_contract_v1.py -q   # один файл (HTTP Contract v1)
+uv run pytest -k "speed" -q                          # по подстроке имени теста
 ```
 
-Тесты детерминированы, не используют сеть и реальные организаторские
-данные — только синтетические payload'ы.
+Тесты детерминированы, не используют внешнюю сеть и реальные
+организаторские данные — только синтетические payload'ы (live smoke-тест
+поднимает локальный uvicorn на `127.0.0.1`).
+
+Интеграционный запуск сервиса с integration-only artifact
+(**INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**), `curl` и smoke
+(`scripts/build_integration_artifact.py`, `scripts/smoke_contract_v1.py`) —
+[`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md) §0.
 
 ## Ruff
 
 ```bash
-uv run ruff check .            # линт
-uv run ruff format --check .   # проверка форматирования, без изменений
-uv run ruff format .           # применить форматирование
+uv run ruff check src scripts tests            # линт
+uv run ruff format --check src scripts tests   # проверка форматирования, без изменений
+uv run ruff format src scripts tests           # применить форматирование
 ```
 
-Конфигурация — в `pyproject.toml` (`[tool.ruff]`).
+Конфигурация — в `pyproject.toml` (`[tool.ruff]`). Scope `src scripts tests`: замороженный
+notebook Dataset Evidence v1 содержит собственные lint-замечания и не правится.
 
 ## Git / гигиена данных
 
@@ -128,15 +140,13 @@ uv run ruff format .           # применить форматирование
   сервис/инструмент/AI — сначала сверьтесь с правилами хакатона.
 - Перед коммитом с широким `git add` проверяйте `git status`/`git diff` —
   не должно случайно попасть ничего из `data/raw|interim|processed/`.
-- Ветки/коммиты — по обычным соглашениям команды; отдельного CI в этом
-  репозитории нет (см. non-goals в [`ARCHITECTURE.md`](ARCHITECTURE.md) §16).
+- Не коммитить сгенерированное: Artifact Bundle (`/artifacts/`),
+  `submission*.csv`, `.env`, `*:Zone.Identifier` (см. `.gitignore`).
+- Ветки/коммиты — по обычным соглашениям команды; отдельного CI сейчас нет.
 
-## Если нужно свериться с backend Андрея
+## Граница с Backend/Frontend
 
-Backend — отдельный репозиторий, `/home/fz/projects/backend`. Из
-`mostransport-ml` его код **не изменяется**. Если нужно проверить
-совместимость (например, тип `vehicle_id`, текущий эндпоинт телеметрии),
-читайте его READ-ONLY и сверяйтесь с
-[`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md) §10.16 и
-[`ARCHITECTURE.md`](ARCHITECTURE.md) §5, где уже зафиксирован
-проверенный срез его текущего состояния.
+Backend и Frontend будут добавлены в этот репозиторий как соседние
+каталоги верхнего уровня. Задача на ML не меняет их код (и наоборот);
+взаимодействие — только через Backend → ML Contract v1
+([`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md)).

@@ -1,7 +1,8 @@
-"""Offline ML-фундамент хакатона Мостранспорта.
+"""ML-часть хакатона Мостранспорта: offline-обучение/оценка и inference-сервис.
 
-Про scope, границы ownership и текущий набор подтверждённых фактов/TBD —
-см. docs/PROJECT_KNOWLEDGE.md и docs/ARCHITECTURE.md.
+Про scope, ownership, подтверждённые факты и открытые вопросы — см.
+docs/PROJECT_KNOWLEDGE.md и docs/ARCHITECTURE.md; контракт с Backend —
+docs/BACKEND_ML_INTEGRATION.md.
 """
 
 __all__: list[str] = []

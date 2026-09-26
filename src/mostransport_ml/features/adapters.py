@@ -179,11 +179,13 @@ def _string(value: Any, path: str) -> str:
 
 
 def _timestamp(value: Any, path: str) -> pd.Timestamp:
-    """ISO-8601 строка или datetime; только timezone-naive.
+    """ISO-8601 строка или datetime; только timezone-aware → naive UTC.
 
-    Offline-данные и builder используют naive-время одного датасетного
-    часового пояса. Пересчёт aware-времени потребовал бы знать этот пояс,
-    а он не подтверждён, поэтому aware-время отклоняется явно.
+    Официальные naive-времена датасета — это UTC wall-clock без метки
+    пояса, и builder работает в этом представлении. Runtime-время обязано
+    быть aware (например `...Z` или `...+03:00`): оно переводится в UTC и
+    лишается метки пояса, поэтому эквивалентные моменты дают одно и то же
+    каноническое значение. Naive runtime-время неоднозначно и отклоняется.
     """
     if isinstance(value, str):
         try:
@@ -194,11 +196,12 @@ def _timestamp(value: Any, path: str) -> pd.Timestamp:
         parsed = value
     else:
         raise ContextValidationError(f"{path}: must be an ISO-8601 datetime")
-    if parsed.tzinfo is not None:
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
         raise ContextValidationError(
-            f"{path}: timezone-aware datetimes are not supported (dataset clock is naive)"
+            f"{path}: timezone-naive datetimes are ambiguous; send timezone-aware ISO-8601 "
+            "(e.g. 2026-01-06T03:35:00Z)"
         )
-    return pd.Timestamp(parsed).as_unit("ns")
+    return pd.Timestamp(parsed).tz_convert("UTC").tz_localize(None).as_unit("ns")
 
 
 def _number(value: Any, path: str, *, nullable: bool) -> float:

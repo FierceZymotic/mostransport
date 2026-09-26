@@ -1,224 +1,131 @@
-"""Inference orchestration и заменяемая граница Predictor.
+"""Inference orchestration Contract v1 и заменяемая граница Predictor.
 
-    FastAPI endpoint -> InferenceService -> Predictor -> prediction results
+    FastAPI → InferenceService → runtime adapter → CanonicalBatch → Predictor
+        → Contract v1 response
 
-`InferenceService` не владеет никакой transport-specific логикой и
-никакой историей по vehicle — она проверяет readiness, вызывает
-predictor и превращает сырой output в строго провалидированный ответ.
-`Predictor` — та точка, куда будущая artifact-backed реализация
-подключится, не трогая FastAPI-слой или код эндпоинтов (см. `mock.py` —
-единственную реализацию, существующую сегодня).
-
-Есть две вещи, которые реализация `Predictor` никогда не должна суметь
-сделать, даже случайно: мутировать переданный ей request, либо соврать о
-типе своей готовности/model_version. Обе проверяются здесь именно в
-рантайме, а не просто описаны в документации — см. `_RequestSnapshot` и
-валидацию в `is_ready`/`model_version`.
+`InferenceService` не считает признаки и не содержит модель: он проверяет
+readiness, нормализует запрос общим runtime-адаптером (тем же, что
+покрыт parity-тестами с offline-путём), вызывает predictor и строго
+валидирует его выход. Predictor получает неизменяемый `CanonicalBatch`,
+поэтому не может подменить запрос.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
-from datetime import datetime
+import math
+from collections.abc import Callable, Sequence
+from datetime import UTC, datetime
 from typing import Protocol
 
-from mostransport_ml.serving.schemas import (
-    PredictionBatchRequest,
-    PredictionBatchResponse,
-    PredictionStatus,
-    VehiclePrediction,
-)
+import pandas as pd
+
+from mostransport_ml.features.adapters import ContextValidationError, runtime_context
+from mostransport_ml.features.builder import ForbiddenInputColumnError
+from mostransport_ml.features.context import CanonicalBatch
+from mostransport_ml.serving.schemas import PredictionV1, PredictRequestV1, PredictResponseV1
 
 
 class PredictorNotReadyError(RuntimeError):
-    """Бросается, когда инференс запрошен до готовности predictor'а."""
+    """Инференс запрошен до готовности predictor'а."""
 
 
 class PredictorContractError(RuntimeError):
-    """Бросается, когда predictor нарушает свой контракт с
-    `InferenceService`: неверное число predictions, неверный порядок,
-    `vehicle_id`, не совпадающий со входом на этой позиции, мутация
-    переданного ему request, либо возвращаемое значение `is_ready`/
-    `model_version` неверного типа или формы. Predictor обязан
-    самостоятельно соблюдать этот контракт — это fail-fast обнаружение, а
-    не тихое исправление (никакой пересортировки, никакого маппинга по
-    id, никакого приведения truthy/falsy значения к bool)."""
+    """Predictor нарушил контракт: тип readiness/версий, число или конечность выходов."""
 
 
-@dataclass(frozen=True)
-class _RequestSnapshot:
-    """Неизменяемый снимок полей request'а, от которых зависит serving
-    contract, снятый до запуска predictor'а.
-
-    Намеренно узкий: это не deep copy всего request'а (без дублирования
-    payload'ов `context`) — только поля, нужные, чтобы обнаружить, что
-    predictor подменил конверт из-под `InferenceService`, и чтобы строить
-    ответ из значений, которых predictor не мог коснуться.
-    """
-
-    prediction_time: datetime
-    horizon_minutes: float | None
-    vehicle_ids: tuple[str, ...]
-
-    @property
-    def vehicle_count(self) -> int:
-        return len(self.vehicle_ids)
-
-    @classmethod
-    def of(cls, request: PredictionBatchRequest) -> _RequestSnapshot:
-        return cls(
-            prediction_time=request.prediction_time,
-            horizon_minutes=request.horizon_minutes,
-            vehicle_ids=tuple(vehicle.vehicle_id for vehicle in request.vehicles),
-        )
-
-
-@dataclass(frozen=True)
-class RawPrediction:
-    """То, что `Predictor` возвращает для одного vehicle, до валидации ответа.
-
-    Намеренно не валидируется при конструировании — превратить это в
-    строго провалидированный `VehiclePrediction` (конечный
-    `predicted_delay` либо None) обязана `InferenceService`, чтобы
-    сломанный predictor не мог напрямую отправить в ответ некорректное
-    значение.
-    """
-
-    vehicle_id: str
-    predicted_delay: float | None
-    status: PredictionStatus = PredictionStatus.OK
+class InvalidPredictionContextError(ValueError):
+    """Запрос прошёл схему, но не может быть нормализован в канонический контекст."""
 
 
 class Predictor(Protocol):
-    """Минимальная, заменяемая граница между serving и реализацией модели.
-
-    Stateless по контракту: ни один метод здесь не принимает и не
-    возвращает ничего, связанного с предыдущим запросом, а `predict_batch`
-    не должен мутировать переданный ему `request`. Этой границы
-    достаточно для mock/pre-hackathon serving; точка синхронизации
-    Artifact Contract (см. docs/ARCHITECTURE.md §7) может ещё расширить
-    её, когда появится реальная семантика метаданных модели, но от
-    будущего artifact-backed predictor'а ожидается реализация тех же
-    методов без изменения FastAPI-слоя.
-
-    `typing.Protocol` документирует этот контракт, но не может проверить
-    его в рантайме — реально проверяет его `InferenceService` (см.
-    `is_ready`/`model_version` ниже и проверку мутации в `predict_batch`).
-    """
+    """Граница между serving и моделью (реализации: `ArtifactPredictor`, `MockPredictor`)."""
 
     def is_ready(self) -> bool:
-        """Может ли predictor сейчас обслуживать `predict_batch`.
-        Обязан вернуть ровно `bool` — не просто truthy/falsy значение."""
+        """Ровно `bool`."""
         ...
 
     def model_version(self) -> str:
-        """Короткий, стабильный, непустой идентификатор текущей
-        загруженной модели. Имеет смысл только когда `is_ready()` вернул
-        `True`."""
+        """Непустая строка; вызывается только у готового predictor'а."""
         ...
 
-    def predict_batch(self, request: PredictionBatchRequest) -> list[RawPrediction]:
-        """Вернуть ровно один `RawPrediction` на каждый `request.vehicles`,
-        в том же порядке, не мутируя `request`."""
+    def feature_schema_version(self) -> str:
+        """Непустая строка; вызывается только у готового predictor'а."""
         ...
+
+    def predict(self, batch: CanonicalBatch) -> Sequence[float]:
+        """Ровно одна итоговая задержка (секунды) на точку, в порядке `batch.points`."""
+        ...
+
+
+def utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _non_empty_str(value: object, name: str) -> str:
+    if not isinstance(value, str) or value == "":
+        raise PredictorContractError(f"predictor.{name}() must return a non-empty str")
+    return value
 
 
 class InferenceService:
-    """Проверяет readiness, вызывает predictor и строит безопасный ответ."""
-
-    def __init__(self, predictor: Predictor) -> None:
+    def __init__(self, predictor: Predictor, clock: Callable[[], datetime] = utc_now) -> None:
         self._predictor = predictor
+        self._clock = clock
 
     def is_ready(self) -> bool:
-        """Readiness, провалидированная в рантайме.
-
-        `typing.Protocol` не может помешать predictor'у вернуть, например,
-        строку `"false"` (truthy!) или `1` вместо настоящего `bool` — иначе
-        это рассогласовало бы `/ready` и `/predict`. Отклоняем всё, что не
-        является ровно `bool`, вместо того чтобы приводить к типу.
-        """
         value = self._predictor.is_ready()
         if type(value) is not bool:
-            raise PredictorContractError(
-                f"predictor.is_ready() must return exactly bool, got "
-                f"{type(value).__name__} ({value!r})"
-            )
+            raise PredictorContractError("predictor.is_ready() must return exactly bool")
         return value
 
     def model_version(self) -> str:
-        """Model version, провалидированная в рантайме: непустая `str`.
+        return _non_empty_str(self._predictor.model_version(), "model_version")
 
-        Вызывать только после того, как predictor сам сообщил о своей
-        готовности — от неготового predictor'а не требуется осмысленная
-        версия.
-        """
-        value = self._predictor.model_version()
-        if not isinstance(value, str) or value == "":
-            raise PredictorContractError(
-                f"predictor.model_version() must return a non-empty str, got {value!r}"
-            )
-        return value
+    def feature_schema_version(self) -> str:
+        return _non_empty_str(self._predictor.feature_schema_version(), "feature_schema_version")
 
-    def predict_batch(self, request: PredictionBatchRequest) -> PredictionBatchResponse:
+    def _generated_at(self) -> datetime:
+        value = self._clock()
+        if not isinstance(value, datetime) or value.tzinfo is None or value.utcoffset() is None:
+            raise PredictorContractError("clock must return a timezone-aware datetime")
+        return value.astimezone(UTC)
+
+    def predict(self, request: PredictRequestV1) -> PredictResponseV1:
         if not self.is_ready():
-            raise PredictorNotReadyError("predictor is not ready to serve inference")
+            raise PredictorNotReadyError("predictor is not ready")
+        model_version = self.model_version()
+        feature_schema_version = self.feature_schema_version()
 
-        snapshot = _RequestSnapshot.of(request)
+        try:
+            batch = runtime_context(request.model_dump(mode="json"))
+        except (ContextValidationError, ForbiddenInputColumnError):
+            raise InvalidPredictionContextError(
+                "request cannot form a prediction context"
+            ) from None
 
-        raw_predictions = self._predictor.predict_batch(request)
-
-        # Predictor'у передали `request` по ссылке, и он мог его
-        # мутировать. Перепроверяем каждое защищённое поле относительно
-        # снимка, снятого *до* вызова — predictor никогда не должен суметь
-        # задним числом переопределить, чем был "request".
-        if request.prediction_time != snapshot.prediction_time:
-            raise PredictorContractError("predictor mutated request.prediction_time")
-        if request.horizon_minutes != snapshot.horizon_minutes:
-            raise PredictorContractError("predictor mutated request.horizon_minutes")
-        if len(request.vehicles) != snapshot.vehicle_count:
-            raise PredictorContractError("predictor mutated the number of request.vehicles")
-        if tuple(vehicle.vehicle_id for vehicle in request.vehicles) != snapshot.vehicle_ids:
-            raise PredictorContractError("predictor mutated request.vehicles ids and/or order")
-
-        if len(raw_predictions) != snapshot.vehicle_count:
-            raise PredictorContractError(
-                f"predictor returned {len(raw_predictions)} predictions for "
-                f"{snapshot.vehicle_count} input vehicles"
-            )
-
-        # Точное 1:1 соответствие identity/order, сверяемое с ИСХОДНЫМИ id
-        # (а не с тем, как `request.vehicles` выглядит сейчас) — predictor,
-        # переставивший порядок или подменивший id, обязан здесь громко
-        # упасть. Это никогда не пересортирует и не перемаппит по id, чтобы
-        # "исправить".
-        for index, (expected_id, raw) in enumerate(
-            zip(snapshot.vehicle_ids, raw_predictions, strict=True)
+        outputs = list(self._predictor.predict(batch))
+        if len(outputs) != len(batch.points):
+            raise PredictorContractError("predictor returned a wrong number of predictions")
+        delay = outputs[0]
+        if (
+            isinstance(delay, bool)
+            or not isinstance(delay, int | float)
+            or not math.isfinite(delay)
         ):
-            if raw.vehicle_id != expected_id:
-                raise PredictorContractError(
-                    f"predictor violated the 1:1 identity/order contract at index "
-                    f"{index}: expected vehicle_id {expected_id!r}, got "
-                    f"{raw.vehicle_id!r}"
-                )
+            raise PredictorContractError("predictor returned a non-finite or non-numeric delay")
+        delay = float(delay)
 
-        # Конструирование VehiclePrediction проверяет конечность
-        # predicted_delay; нефинитный output predictor'а бросит исключение
-        # здесь, до того как ответ будет построен или отправлен.
-        predictions = [
-            VehiclePrediction(
-                vehicle_id=raw.vehicle_id,
-                predicted_delay=raw.predicted_delay,
-                status=raw.status,
-            )
-            for raw in raw_predictions
-        ]
-
-        # Строится из ИСХОДНОГО снимка, никогда из `request` — даже если бы
-        # каждая проверка выше как-то прошла, ответ не может нести
-        # мутированные prediction_time/horizon_minutes.
-        return PredictionBatchResponse(
-            prediction_time=snapshot.prediction_time,
-            horizon_minutes=snapshot.horizon_minutes,
-            model_version=self.model_version(),
-            predictions=predictions,
+        point = batch.points[0]
+        target_time = (
+            (point.target_time_begin + pd.Timedelta(seconds=delay))
+            .round("us")
+            .tz_localize("UTC")
+            .to_pydatetime()
+        )
+        return PredictResponseV1(
+            request_id=request.request_id,
+            prediction=PredictionV1(delay_seconds=delay, target_time=target_time, reason=None),
+            generated_at=self._generated_at(),
+            model_version=model_version,
+            feature_schema_version=feature_schema_version,
         )
