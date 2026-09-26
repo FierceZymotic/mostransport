@@ -1,0 +1,133 @@
+* { box-sizing: border-box; }
+
+:root {
+  font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  color: #eef2f7;
+  background: #090d12;
+  font-synthesis: none;
+}
+
+body { margin: 0; min-width: 1100px; background: #090d12; }
+
+button, input { font: inherit; }
+
+.app { min-height: 100vh; padding: 24px; }
+
+.topbar {
+  display: flex; justify-content: space-between; align-items: center;
+  margin-bottom: 20px;
+}
+
+.eyebrow { color: #7e8998; font-size: 10px; font-weight: 800; letter-spacing: .13em; }
+h1 { margin: 4px 0 0; font-size: 26px; }
+h2 { margin: 0; font-size: 18px; }
+
+.live {
+  display: flex; align-items: center; gap: 8px; color: #aab4c2;
+  border: 1px solid #202833; background: #0e141b; padding: 9px 13px; border-radius: 10px;
+}
+.live-dot { width: 8px; height: 8px; border-radius: 50%; background: #39d98a; box-shadow: 0 0 12px #39d98a; }
+
+.stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 14px; }
+.stat {
+  display: flex; gap: 12px; align-items: center; padding: 15px;
+  border: 1px solid #202833; background: #0e141b; border-radius: 12px;
+}
+.stat-icon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 9px; background: #17202a; color: #8fb6ff; }
+.stat-icon.danger { color: #ff6673; }
+.stat span { display: block; color: #778393; font-size: 11px; margin-bottom: 3px; }
+.stat strong { font-size: 17px; }
+
+.workspace {
+  display: grid; grid-template-columns: 1fr 390px; height: calc(100vh - 183px);
+  min-height: 620px; gap: 14px;
+}
+
+.map {
+  position: relative; overflow: hidden; border: 1px solid #202833; border-radius: 14px;
+  background: #111820;
+}
+.map-grid {
+  position: absolute; inset: 0;
+  background-image: linear-gradient(#1b2530 1px, transparent 1px), linear-gradient(90deg, #1b2530 1px, transparent 1px);
+  background-size: 48px 48px; opacity: .55;
+}
+.map-label { position: absolute; top: 15px; left: 16px; color: #657182; font-size: 10px; letter-spacing: .1em; z-index: 3; }
+.map-road { position: absolute; height: 4px; background: #293541; transform-origin: left; border-radius: 5px; }
+.road-a { width: 90%; top: 43%; left: 3%; transform: rotate(-8deg); }
+.road-b { width: 72%; top: 66%; left: 12%; transform: rotate(18deg); }
+.road-c { width: 68%; top: 20%; left: 20%; transform: rotate(67deg); }
+
+.vehicle-marker {
+  position: absolute; z-index: 4; width: 20px; height: 20px; padding: 0;
+  border: 0; border-radius: 50%; background: transparent; cursor: pointer;
+}
+.vehicle-marker span { display: block; width: 13px; height: 13px; border-radius: 50%; border: 3px solid #111820; margin: 3px; }
+.vehicle-marker.low span { background: #38d98a; }
+.vehicle-marker.medium span { background: #f5c451; }
+.vehicle-marker.high span { background: #ff5967; box-shadow: 0 0 14px #ff5967; }
+.vehicle-marker.selected span { outline: 3px solid #fff; outline-offset: 2px; }
+
+.sidebar {
+  display: flex; flex-direction: column; overflow: hidden;
+  border: 1px solid #202833; background: #0e141b; border-radius: 14px;
+}
+.sidebar-header { padding: 16px; border-bottom: 1px solid #202833; }
+.sidebar-header > div:first-child { display: flex; justify-content: space-between; align-items: center; }
+.sidebar-header span { color: #687484; font-size: 12px; }
+.search {
+  margin-top: 12px; display: flex; align-items: center; gap: 8px;
+  background: #111820; border: 1px solid #222d39; padding: 8px 10px; border-radius: 8px; color: #687484;
+}
+.search input { width: 100%; border: 0; outline: 0; background: transparent; color: #e9eef5; }
+.vehicle-list { overflow: auto; }
+.vehicle-card {
+  width: 100%; display: flex; align-items: center; gap: 10px; text-align: left;
+  border: 0; border-bottom: 1px solid #1c252f; background: transparent; color: #e7ebf0;
+  padding: 13px 15px; cursor: pointer;
+}
+.vehicle-card:hover, .vehicle-card.active { background: #151e28; }
+.risk-dot { width: 8px; height: 8px; border-radius: 50%; flex: 0 0 auto; }
+.risk-dot.low { background: #39d98a; }
+.risk-dot.medium { background: #f5c451; }
+.risk-dot.high { background: #ff5967; }
+.vehicle-main { flex: 1; }
+.vehicle-main strong { display: block; font-size: 13px; }
+.vehicle-main span { color: #707d8d; font-size: 11px; }
+.delay { font-size: 11px; color: #b3bdc9; }
+
+.incident { margin-top: auto; padding: 17px; border-top: 1px solid #202833; }
+.incident-title { display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 18px; }
+.incident-title h2 { margin-top: 3px; font-size: 22px; }
+.badge { padding: 5px 8px; border-radius: 6px; font-size: 10px; font-weight: 800; }
+.badge.low { background: #123326; color: #5de5a2; }
+.badge.medium { background: #382e16; color: #f5cf68; }
+.badge.high { background: #3a181d; color: #ff7b86; }
+
+.incident-row { display: flex; justify-content: space-between; gap: 15px; padding: 8px 0; border-bottom: 1px solid #1b242d; }
+.incident-row span { color: #6e7a89; font-size: 11px; }
+.incident-row strong { max-width: 62%; text-align: right; font-size: 11px; color: #dce2e9; }
+
+.reason {
+  display: flex; gap: 10px; margin-top: 14px; padding: 11px; border-radius: 9px;
+  background: #171e27; color: #ff7b86;
+}
+.reason span { display: block; color: #6e7a89; font-size: 10px; margin-bottom: 3px; }
+.reason strong { font-size: 11px; color: #dce2e9; }
+
+.yandex-map { position: absolute; inset: 0; width: 100%; height: 100%; }
+.map-loading, .map-error {
+  position: absolute; inset: 0; display: grid; place-items: center;
+  background: #111820; color: #9aa7b6; z-index: 5; padding: 20px; text-align: center;
+}
+.map-error { color: #ff7b86; }
+.ymarker {
+  width: 20px; height: 20px; padding: 0; border: 3px solid #111820;
+  border-radius: 50%; cursor: pointer; display: block;
+  transform: translate(-50%, -50%);
+}
+.ymarker span { display: block; width: 100%; height: 100%; border-radius: 50%; }
+.ymarker.low span { background: #39d98a; }
+.ymarker.medium span { background: #f5c451; }
+.ymarker.high span { background: #ff5967; box-shadow: 0 0 14px #ff5967; }
+.ymarker.selected { outline: 3px solid #fff; outline-offset: 2px; }
