@@ -1,0 +1,1 @@
+{"root":["./src/app.tsx","./src/main.tsx","./src/types.ts","./src/yandex.d.ts","./src/components/yandexmap.tsx","./src/lib/ymaps.ts","./src/lib/ymaps3.ts","./src/mock/vehicles.ts","./src/types/ymaps.d.ts"],"version":"5.9.3"}
