@@ -36,21 +36,96 @@ const riskLabel: Record<RiskLevel, string> = {
   high: "Высокий",
 };
 
+type DashboardSummaryResponse = {
+  total: number;
+  highRisk: number;
+  mediumRisk: number;
+  lowRisk: number;
+  vehicles: {
+    id: string;
+    route: string;
+    lat: number;
+    lon: number;
+    speed: number;
+    delayMinutes: number;
+    risk: RiskLevel;
+    reason: string;
+    segment: string;
+    updatedAt?: string;
+  }[];
+};
+
 function App() {
   const [selected, setSelected] = useState<Vehicle | null>(vehicles[0]);
   const [query, setQuery] = useState("");
   const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>(vehicles);
-  const [backendConnected, setBackendConnected] = useState(false);
+  const [dashboardVehicles, setDashboardVehicles] = useState<Vehicle[]>(vehicles);
+  const [liveConnected, setLiveConnected] = useState(false);
+  const [dashboardConnected, setDashboardConnected] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    fetch("http://localhost:3000/prediction/dashboard/summary")
+      .then(async (response) => {
+        if (!response.ok) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+
+        const payload = (await response.json()) as DashboardSummaryResponse;
+
+        if (cancelled) {
+          return;
+        }
+
+        if (Array.isArray(payload.vehicles)) {
+          const normalized = payload.vehicles.map((vehicle) => ({
+            ...vehicle,
+            speed: Number(vehicle.speed ?? 0),
+            lat: Number(vehicle.lat ?? 0),
+            lon: Number(vehicle.lon ?? 0),
+            delayMinutes: Number(vehicle.delayMinutes ?? 0),
+          }));
+
+          setDashboardVehicles(normalized);
+          setDashboardConnected(true);
+
+          if (!selected) {
+            setSelected(normalized[0] ?? vehicles[0]);
+          }
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDashboardConnected(false);
+        }
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    const baseList = liveConnected ? liveVehicles : dashboardConnected ? dashboardVehicles : vehicles;
+    if (!baseList.length) {
+      return;
+    }
+
+    setSelected((current) => current && baseList.some((vehicle) => vehicle.id === current.id)
+      ? current
+      : baseList[0]);
+  }, [liveConnected, dashboardConnected, liveVehicles, dashboardVehicles]);
 
   useEffect(() => {
     const socket = new WebSocket("ws://localhost:3000/live");
 
     socket.onopen = () => {
-      setBackendConnected(true);
+      setLiveConnected(true);
     };
 
     socket.onclose = () => {
-      setBackendConnected(false);
+      setLiveConnected(false);
     };
 
     socket.onmessage = (event) => {
@@ -101,7 +176,13 @@ function App() {
     };
   }, []);
 
-  const visibleVehicles = backendConnected ? liveVehicles : vehicles;
+  const visibleVehicles = liveConnected
+    ? liveVehicles
+    : dashboardConnected
+      ? dashboardVehicles
+      : vehicles;
+
+  const sourceLabel = liveConnected ? "ЯНДЕКС КАРТЫ · LIVE DATA" : dashboardConnected ? "ЯНДЕКС КАРТЫ · DASHBOARD DATA" : "ЯНДЕКС КАРТЫ · MOCK DATA";
 
   const filtered = useMemo(
     () =>
@@ -131,12 +212,12 @@ function App() {
         <Stat icon={<Bus />} title="ТС в потоке" value={visibleVehicles.length} />
         <Stat icon={<AlertTriangle />} title="Высокий риск" value={highRisk} danger />
         <Stat icon={<Clock3 />} title="Горизонт прогноза" value="10–15 мин" />
-        <Stat icon={<Wifi />} title="Backend" value={backendConnected ? "Live" : "Mock"} />
+        <Stat icon={<Wifi />} title="Backend" value={liveConnected ? "Live" : dashboardConnected ? "Dashboard" : "Mock"} />
       </section>
 
       <section className="workspace">
         <div className="map">
-          <div className="map-label">ЯНДЕКС КАРТЫ · MOCK DATA</div>
+          <div className="map-label">{sourceLabel}</div>
           <YandexMap
             vehicles={visibleVehicles}
             selected={selected}
