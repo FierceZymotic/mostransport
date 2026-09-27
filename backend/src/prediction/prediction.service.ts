@@ -9,7 +9,45 @@ import {
 import { ScheduleRepository } from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
-const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
+export const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
+
+export function normalizeTimestampToFrozenContract(value: Date | number): number {
+  const timestamp = value instanceof Date ? value.getTime() : Number(value);
+
+  if (!Number.isFinite(timestamp)) {
+    return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
+  }
+
+  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
+  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
+  const candidate = new Date(timestamp);
+
+  if (candidate >= frozenStart && candidate < frozenEnd) {
+    return Math.floor(candidate.getTime() / 1000);
+  }
+
+  return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
+}
+
+export function normalizePredictionTime(input: Date): Date {
+  const value = new Date(input);
+
+  if (Number.isNaN(value.getTime())) {
+    return new Date(DEFAULT_DEMO_PREDICTION_TIME);
+  }
+
+  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
+  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
+  if (value >= frozenStart && value < frozenEnd) {
+    return value;
+  }
+
+  return new Date(DEFAULT_DEMO_PREDICTION_TIME);
+}
+
+export function normalizeTelemetryTimestamp(input: number | Date): number {
+  return normalizeTimestampToFrozenContract(input);
+}
 
 @Injectable()
 export class PredictionService {
@@ -34,15 +72,17 @@ export class PredictionService {
     unitId: number,
     predictionTime: Date,
   ): Promise<PredictionResponse> {
+    const normalizedPredictionTime = normalizePredictionTime(predictionTime);
+
     const vehicleHistory =
       await this.telemetryRepository.findHistory(
         unitId,
-        predictionTime,
+        normalizedPredictionTime,
       );
 
     if (vehicleHistory.length === 0) {
       throw new Error(
-        `No telemetry found for unit ${unitId} at ${predictionTime.toISOString()}`,
+        `No telemetry found for unit ${unitId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }
 
@@ -63,19 +103,19 @@ export class PredictionService {
     const targetAction =
       await this.scheduleRepository.findTargetAction(
         match.trId,
-        predictionTime,
+        normalizedPredictionTime,
       );
 
     if (!targetAction) {
       throw new Error(
-        `No target schedule action found for trId ${match.trId} at ${predictionTime.toISOString()}`,
+        `No target schedule action found for trId ${match.trId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }
 
     const request: PredictionRequest = {
       request_id: crypto.randomUUID(),
 
-      prediction_time: predictionTime.toISOString(),
+      prediction_time: normalizedPredictionTime.toISOString(),
 
       vehicle_context: {
         unit_id: String(unitId),
@@ -97,7 +137,7 @@ export class PredictionService {
         current_deviation_seconds:
   await this.scheduleRepository.getCurrentDeviation(
     match.trId,
-    predictionTime,
+    normalizedPredictionTime,
   ),
 
         manual_fill: targetAction.manual_fill,
@@ -107,7 +147,7 @@ export class PredictionService {
         .filter(
           (state) =>
             state.timestamp <=
-            Math.floor(predictionTime.getTime() / 1000),
+            Math.floor(normalizedPredictionTime.getTime() / 1000),
         )
         .map((state) => ({
           event_time: new Date(
@@ -135,7 +175,7 @@ await this.prisma.predictions.create({
     request_id: response.request_id,
     unit_id: String(unitId),
     tr_id: match.trId,
-    prediction_time: predictionTime,
+    prediction_time: normalizedPredictionTime,
     target_action_id: targetAction.target_action_id,
     target_time_begin: new Date(targetAction.target_time_begin),
     status: response.status,

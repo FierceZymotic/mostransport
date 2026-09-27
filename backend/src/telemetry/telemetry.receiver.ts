@@ -5,6 +5,7 @@ import {
   OnModuleInit,
 } from '@nestjs/common';
 import { Server, Socket, createServer } from 'node:net';
+import { normalizeTelemetryTimestamp } from '../prediction/prediction.service.js';
 import { NdtpPacketExtractor } from './ndtp/ndtp.packet-extractor.js';
 import { TelemetryParser } from './telemetry.parser.js';
 import { TelemetryHistory } from './telemetry-history.js';
@@ -71,12 +72,17 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
           packet.unitId,
         );
 
-        this.history.add(telemetry);
-          await this.repository.save(telemetry);
-          await this.repository.saveLastState(telemetry);
+        const normalizedTelemetry = {
+          ...telemetry,
+          timestamp: normalizeTelemetryTimestamp(telemetry.timestamp),
+        };
+
+        this.history.add(normalizedTelemetry);
+        await this.repository.save(normalizedTelemetry);
+        await this.repository.saveLastState(normalizedTelemetry);
 
         this.logger.log(
-          `VehicleState: ${JSON.stringify(telemetry)}`,
+          `VehicleState: ${JSON.stringify(normalizedTelemetry)}`,
         );
       }
     });

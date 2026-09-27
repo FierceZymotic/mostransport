@@ -1,4 +1,5 @@
 import { Injectable } from '@nestjs/common';
+import { normalizeTelemetryTimestamp } from '../prediction/prediction.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { VehicleState } from './vehicle-state.js';
 
@@ -7,10 +8,12 @@ export class TelemetryRepository {
   constructor(private readonly prisma: PrismaService) {}
 
   async save(state: VehicleState): Promise<void> {
+    const normalizedTimestamp = normalizeTelemetryTimestamp(state.timestamp);
+
     await this.prisma.telemetry.create({
       data: {
         unit_id: String(state.unitId),
-        timestamp: new Date(state.timestamp * 1000),
+        timestamp: new Date(normalizedTimestamp * 1000),
         longitude: state.longitude,
         latitude: state.latitude,
         location_valid: state.locationValid,
@@ -26,6 +29,8 @@ export class TelemetryRepository {
   }
 
   async saveLastState(state: VehicleState): Promise<void> {
+    const normalizedTimestamp = normalizeTelemetryTimestamp(state.timestamp);
+
     await this.prisma.vehicle_last_state.upsert({
       where: {
         unit_id: String(state.unitId),
@@ -33,20 +38,38 @@ export class TelemetryRepository {
       create: {
         unit_id: String(state.unitId),
         tr_id: null,
-        timestamp: new Date(state.timestamp * 1000),
+        timestamp: new Date(normalizedTimestamp * 1000),
         longitude: state.longitude,
         latitude: state.latitude,
         speed: state.speed,
         location_valid: state.locationValid,
       },
       update: {
-        timestamp: new Date(state.timestamp * 1000),
+        timestamp: new Date(normalizedTimestamp * 1000),
         longitude: state.longitude,
         latitude: state.latitude,
         speed: state.speed,
         location_valid: state.locationValid,
       },
     });
+  }
+
+  async findLatestTimestamp(
+    unitId: number,
+  ): Promise<Date | null> {
+    const row = await this.prisma.telemetry.findFirst({
+      where: {
+        unit_id: String(unitId),
+      },
+      orderBy: {
+        timestamp: 'desc',
+      },
+      select: {
+        timestamp: true,
+      },
+    });
+
+    return row?.timestamp ?? null;
   }
 
   async findHistory(
