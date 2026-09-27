@@ -7,7 +7,7 @@ import pandas as pd
 import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_URL = "postgresql://postgres:postgres@localhost:5433/mostransport"
+DB_URL = "postgresql://postgres:postgres@localhost:5432/mostransport"
 
 
 def ensure_schema(conn: psycopg.Connection) -> None:
@@ -23,13 +23,14 @@ def parse_manual_fill(value):
         return None
     text = str(value).strip()
     if text.lower() in {"true", "false"}:
-        return text.lower() == "true"
+        return text.lower()
     if text.lower() in {"null", "none"}:
         return None
     try:
-        return json.loads(text)
+        parsed = json.loads(text)
+        return json.dumps(parsed)
     except json.JSONDecodeError:
-        return text
+        return json.dumps(text)
 
 
 def import_telemetry(conn: psycopg.Connection) -> int:
@@ -78,7 +79,7 @@ def import_schedule_actions(conn: psycopg.Connection) -> int:
                 """
                 INSERT INTO schedule_actions (
                     tt_action_item_id, tr_id, time_begin, time_fact_begin, geom, manual_fill
-                ) VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326), %s)
+                ) VALUES (%s, %s, %s, %s, ST_GeomFromText(%s, 4326), CAST(%s AS jsonb))
                 ON CONFLICT (tt_action_item_id) DO NOTHING
                 """,
                 (
