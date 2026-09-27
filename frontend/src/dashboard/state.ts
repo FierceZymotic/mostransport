@@ -6,7 +6,7 @@
 //   prediction <- /prediction/dashboard/alerts rows (prediction history), refreshed whenever a
 //                 WebSocket "prediction" event arrives
 // A telemetry update never touches the prediction and vice versa.
-import type { RiskLevel, RiskState } from "../types";
+import type { RiskLevel, RiskState, Vehicle } from "../types";
 
 // ---------------------------------------------------------------- Backend payloads (read-only)
 
@@ -372,11 +372,50 @@ export function toVehicleView(unit: UnitState): VehicleView {
   };
 }
 
+/**
+ * Views for all units with structural sharing: a unit whose state object did not change keeps
+ * the same view object (applyTelemetry / mergeAlerts replace only the unit an event touched), so
+ * one unit's packet does not hand every row and marker a fresh object.
+ */
+export function buildVehicleViews(units: DashboardState, cache: WeakMap<UnitState, VehicleView>): VehicleView[] {
+  return Object.values(units).map((unit) => {
+    let view = cache.get(unit);
+    if (!view) {
+      view = toVehicleView(unit);
+      cache.set(unit, view);
+    }
+    return view;
+  });
+}
+
+function compareUnitIds(a: string, b: string): number {
+  return a.localeCompare(b, "en", { numeric: true });
+}
+
+/**
+ * Marker input for the map: only map-visible fields, in stable unit-id order (independent of the
+ * risk-sorted list). An unchanged marker keeps its object and, when no marker changed, the previous
+ * array is returned, so realtime updates that do not move or recolour a marker leave the map alone.
+ */
+export function mapVehiclesFrom(views: VehicleView[], previous: Vehicle[]): Vehicle[] {
+  const previousById = new Map(previous.map((vehicle) => [vehicle.id, vehicle]));
+  const next = views
+    .filter((view) => view.hasPosition)
+    .map((view) => {
+      const before = previousById.get(view.id);
+      return before && before.lat === view.lat && before.lon === view.lon && before.risk === view.risk && before.route === view.route
+        ? before
+        : { id: view.id, route: view.route, lat: view.lat, lon: view.lon, risk: view.risk };
+    })
+    .sort((a, b) => compareUnitIds(a.id, b.id));
+  return next.length === previous.length && next.every((vehicle, i) => vehicle === previous[i]) ? previous : next;
+}
+
 const RISK_ORDER: Record<RiskState, number> = { high: 0, medium: 1, low: 2, unknown: 3 };
 
 /** Problematic vehicles first, then by unit id (numeric when possible). */
 export function compareVehicleViews(a: VehicleView, b: VehicleView): number {
   const byRisk = RISK_ORDER[a.risk] - RISK_ORDER[b.risk];
   if (byRisk !== 0) return byRisk;
-  return a.id.localeCompare(b.id, "en", { numeric: true });
+  return compareUnitIds(a.id, b.id);
 }

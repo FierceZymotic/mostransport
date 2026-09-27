@@ -24,6 +24,25 @@ GroupKFold OOF MAE 77.34108978455868 с допуском 1e-9. Artifact
 `integration-fixture-v1` и `integration-fixture-hgb-v1` — синтетические fixtures
 только для проверки интеграции, не модели качества.
 
+## Quick demo
+
+Нужен только Docker с Docker Compose v2 и образ NDTP-эмулятора организаторов
+(`docker load -i ndtp-telemetry-emulator.tar` один раз, либо
+`EMULATOR_TAR=/path/ndtp-telemetry-emulator.tar ./run-demo.sh`).
+
+```bash
+./run-demo.sh          # Linux / WSL / macOS
+.\run-demo.ps1         # Windows PowerShell
+```
+
+Скрипт создаёт `.env` из `.env.example`, если его нет (существующий не трогает),
+собирает и поднимает стек `docker compose up -d --build`, ждёт готовности
+(ML `/ready`, Postgres, Backend `/health`, дашборд), печатает URL дашборда и
+открывает его в браузере, если это возможно. Первая сборка образов занимает
+несколько минут. Для карты укажите `VITE_YANDEX_MAPS_API_KEY` в `.env`.
+
+Остановка: `docker compose down` (данные БД сохраняются).
+
 ## С чего начать чтение
 
 1. **README** (этот файл) — быстрый вход и команды.

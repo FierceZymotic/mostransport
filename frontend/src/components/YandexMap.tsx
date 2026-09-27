@@ -2,6 +2,10 @@ import { useEffect, useState } from "react";
 import { loadYandexMaps } from "../lib/ymaps";
 import type { Vehicle } from "../types";
 
+// One constant initial view: every re-render passes the identical value, so a realtime update
+// can never re-apply (reset) the map location.
+const DEFAULT_LOCATION = { center: [37.617, 55.755] as [number, number], zoom: 11 };
+
 interface Props {
   vehicles: Vehicle[];
   selected: Vehicle | null;
@@ -32,11 +36,9 @@ export default function YandexMap({ vehicles, selected, onSelect }: Props) {
     reactify,
   } = api;
 
-  const center: [number, number] = [37.617, 55.755];
-
   return (
     <YMap
-      location={reactify.useDefault({ center, zoom: 11 })}
+      location={reactify.useDefault(DEFAULT_LOCATION)}
       className="yandex-map"
     >
       <YMapDefaultSchemeLayer />
@@ -45,7 +47,8 @@ export default function YandexMap({ vehicles, selected, onSelect }: Props) {
       {vehicles.map((vehicle) => (
         <YMapMarker
           key={vehicle.id}
-          coordinates={reactify.useDefault([vehicle.lon, vehicle.lat])}
+          // Controlled position: the marker (keyed by unit id) is updated in place on telemetry.
+          coordinates={[vehicle.lon, vehicle.lat]}
           zIndex={selected?.id === vehicle.id ? 10 : 1}
         >
           <button

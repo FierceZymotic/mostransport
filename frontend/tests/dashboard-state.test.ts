@@ -5,10 +5,12 @@ import { describe, it } from "node:test";
 
 import {
   applyTelemetry,
+  buildVehicleViews,
   displayReason,
   formatDelay,
   formatSpeed,
   latestPredictionByUnitId,
+  mapVehiclesFrom,
   mergeAlerts,
   normalizeSpeedKmh,
   reasonPresentation,
@@ -18,6 +20,8 @@ import {
   toVehicleView,
   type AlertRow,
   type DashboardState,
+  type UnitState,
+  type VehicleView,
 } from "../src/dashboard/state.ts";
 
 const DEGRADED = "degraded:current_deviation_unavailable(no_fact_source)";
@@ -184,5 +188,67 @@ describe("header, section and speed", () => {
     assert.equal(formatSpeed(normalizeSpeedKmh(17.6)), "18 км/ч");
     assert.equal(normalizeSpeedKmh(-1), null);
     assert.equal(formatSpeed(null), "нет данных");
+  });
+});
+
+describe("stable realtime rendering (flicker root cause: the map was re-fed on every update)", () => {
+  const at = (unitId: number, lat: number, speed: number) =>
+    ({ unitId, latitude: lat, longitude: 37.6, locationValid: true, speed });
+
+  function twoUnits(): DashboardState {
+    let state = applyTelemetry({}, at(1003, 55.70, 20), 1);
+    state = applyTelemetry(state, at(1004, 55.80, 30), 2);
+    return mergeAlerts(state, [alert("a", "1003", 11, "2026-09-27T10:00:00.000Z"), alert("b", "1004", 300, "2026-09-27T10:00:01.000Z")]);
+  }
+
+  it("one unit's packet keeps the other units' view objects and does not re-feed an unchanged map", () => {
+    const cache = new WeakMap<UnitState, VehicleView>();
+    const state = twoUnits();
+    const views1 = buildVehicleViews(state, cache);
+    const map1 = mapVehiclesFrom(views1, []);
+
+    const speedOnly = applyTelemetry(state, at(1003, 55.70, 25), 3); // same position, new speed
+    const views2 = buildVehicleViews(speedOnly, cache);
+    assert.equal(views2.find((v) => v.id === "1004"), views1.find((v) => v.id === "1004")); // untouched unit: same object
+    assert.notEqual(views2.find((v) => v.id === "1003"), views1.find((v) => v.id === "1003"));
+    assert.equal(mapVehiclesFrom(views2, map1), map1); // no marker changed -> identical map input
+
+    const moved = applyTelemetry(speedOnly, at(1003, 55.71, 25), 4);
+    const map3 = mapVehiclesFrom(buildVehicleViews(moved, cache), map1);
+    assert.notEqual(map3, map1);
+    assert.equal(map3.find((m) => m.id === "1004"), map1.find((m) => m.id === "1004")); // other marker untouched
+    assert.equal(map3.find((m) => m.id === "1003")?.lat, 55.71); // realtime position still applied
+  });
+
+  it("marker order is the stable unit-id order, not the risk-sorted list order", () => {
+    const cache = new WeakMap<UnitState, VehicleView>();
+    let state = twoUnits();
+    const map1 = mapVehiclesFrom(buildVehicleViews(state, cache), []);
+    assert.deepEqual(map1.map((m) => m.id), ["1003", "1004"]);
+    state = mergeAlerts(state, [alert("c", "1003", 900, "2026-09-27T10:05:00.000Z")]); // 1003 becomes high risk
+    const map2 = mapVehiclesFrom(buildVehicleViews(state, cache), map1);
+    assert.deepEqual(map2.map((m) => m.id), ["1003", "1004"]);
+    assert.equal(map2[0].risk, "high"); // colour changes, identity/order kept
+    assert.equal(map2[1], map1[1]);
+  });
+
+  it("a prediction refresh in progress or returning nothing newer never clears the current prediction", () => {
+    const state = twoUnits();
+    assert.equal(mergeAlerts(state, []), state); // empty / in-flight refresh: state object unchanged (no re-render)
+    const older = mergeAlerts(state, [alert("old", "1003", 999, "2026-09-27T09:00:00.000Z")]);
+    assert.equal(older, state);
+    assert.equal(mergeAlerts(state, [alert("a", "1003", 11, "2026-09-27T10:00:00.000Z")]), state); // same row again
+    const newer = mergeAlerts(state, [alert("n", "1003", 45, "2026-09-27T10:10:00.000Z")]);
+    assert.equal(newer["1003"].prediction?.requestId, "n"); // replaced only by valid newer data
+    assert.deepEqual(newer["1003"].telemetry, state["1003"].telemetry);
+    assert.equal(newer["1004"], state["1004"]); // other unit untouched
+  });
+
+  it("keeps the degraded reason human-readable across realtime updates", () => {
+    let state = twoUnits();
+    for (let i = 0; i < 5; i++) state = applyTelemetry(state, at(1003, 55.70 + i / 1000, 20 + i), 10 + i);
+    const view = buildVehicleViews(state, new WeakMap()).find((v) => v.id === "1003")!;
+    assert.equal(view.reason?.text, "Недостаточно фактических данных по графику");
+    assert.equal(view.reason?.kind, "degraded");
   });
 });
