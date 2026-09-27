@@ -41,7 +41,7 @@ experiments/*.log
 *.cbm
 # Root-level Artifact Bundle output (anchored: must NOT match the source
 # package src/mostransport_ml/artifacts/).
-#/artifacts/
+/artifacts/
 # Generated submissions.
 submission*.csv
 
