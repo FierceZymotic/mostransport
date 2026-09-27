@@ -1,14 +1,16 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Bus, Clock3, Radio, Search, Wifi } from "lucide-react";
 import YandexMap from "./components/YandexMap";
+import type { Vehicle } from "./types";
 import {
   applyTelemetry,
+  buildVehicleViews,
   compareVehicleViews,
   formatAge,
+  mapVehiclesFrom,
   mergeAlerts,
   predictionEventDetails,
   seedFromSummary,
-  toVehicleView,
   type AlertRow,
   type DashboardState,
   type PredictionEventDetails,
@@ -16,6 +18,7 @@ import {
   reasonPresentation,
   type SummaryVehicle,
   type TelemetryPayload,
+  type UnitState,
   type VehicleView,
 } from "./dashboard/state";
 
@@ -24,6 +27,12 @@ const SUMMARY_URL = `${API_BASE}/prediction/dashboard/summary`;
 const ALERTS_URL = `${API_BASE}/prediction/dashboard/alerts`;
 const LIVE_URL = "ws://localhost:3000/live";
 const MAX_PENDING_DETAILS = 200;
+
+// The map re-renders only when its marker input or the selection actually changes.
+const StableYandexMap = memo(YandexMap);
+
+// Views keyed by unit state object (pure, so shared safely): an unchanged unit keeps its view.
+const viewCache = new WeakMap<UnitState, VehicleView>();
 
 function App() {
   const [units, setUnits] = useState<DashboardState>({});
@@ -171,12 +180,23 @@ function App() {
     };
   }, []);
 
+  // Unchanged units keep their view objects; the map gets id-ordered, map-only marker objects
+  // that are reused (and the same array) unless a marker moved or changed risk / route.
   const vehicles = useMemo(
-    () => Object.values(units).map(toVehicleView).sort(compareVehicleViews),
+    () => buildVehicleViews(units, viewCache).sort(compareVehicleViews),
     [units]
   );
-  const mapVehicles = useMemo(() => vehicles.filter((vehicle) => vehicle.hasPosition), [vehicles]);
+  // Derived from the previous render's value (React "storing information from previous renders"):
+  // updated synchronously in the same render, reused when no marker changed.
+  const [mapInput, setMapInput] = useState<{ source: VehicleView[] | null; vehicles: Vehicle[] }>({ source: null, vehicles: [] });
+  let mapVehicles = mapInput.vehicles;
+  if (mapInput.source !== vehicles) {
+    mapVehicles = mapVehiclesFrom(vehicles, mapInput.vehicles);
+    setMapInput({ source: vehicles, vehicles: mapVehicles });
+  }
   const selected = selectedId ? vehicles.find((vehicle) => vehicle.id === selectedId) ?? null : null;
+  const selectedMarker = selectedId ? mapVehicles.find((vehicle) => vehicle.id === selectedId) ?? null : null;
+  const selectVehicle = useCallback((vehicle: Vehicle) => setSelectedId(vehicle.id), []);
 
   const sourceLabel = liveConnected ? "ЯНДЕКС КАРТЫ · LIVE DATA" : dashboardConnected ? "ЯНДЕКС КАРТЫ · DASHBOARD DATA" : "ЯНДЕКС КАРТЫ · WAITING FOR DATA";
 
@@ -215,10 +235,10 @@ function App() {
         <div className="map">
           <div className="map-label">{sourceLabel}</div>
           {mapVehicles.length ? (
-            <YandexMap
+            <StableYandexMap
               vehicles={mapVehicles}
-              selected={selected}
-              onSelect={(vehicle) => setSelectedId(vehicle.id)}
+              selected={selectedMarker}
+              onSelect={selectVehicle}
             />
           ) : (
             <div className="empty-state">Ожидание live-данных от backend…</div>
