@@ -1,4 +1,4 @@
-"""Point-in-time Feature Builder `tabular-v1` (M1).
+"""Point-in-time Feature Builder `tabular-v1` (M1) и его проекция `runtime-safe-v1`.
 
 `builder.build_features()` получает prediction points, telemetry и
 плановый schedule-контекст явно (без чтения файлов), чтобы та же

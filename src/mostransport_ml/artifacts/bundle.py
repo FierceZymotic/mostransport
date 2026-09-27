@@ -182,14 +182,17 @@ def _read_regular_file(root: Path, name: str) -> bytes:
 def load_bundle(
     directory: str | Path,
     *,
-    expected_feature_schema_version: str,
     supported_model_families: Iterable[str],
+    expected_feature_schema_version: str | None = None,
+    supported_feature_schema_versions: Iterable[str] | None = None,
 ) -> VerifiedBundle:
     """Проверить bundle целиком и вернуть проверенные manifest и байты модели.
 
     Порядок: bundle.json → состав каталога → хеш manifest → хеш модели →
     строгий manifest → совместимость схемы признаков → поддержка model_family.
-    Модель здесь не загружается.
+    Схема признаков задаётся ровно одним режимом (см. `validate_compatibility`):
+    точная `expected_feature_schema_version` или набор
+    `supported_feature_schema_versions`. Модель здесь не загружается.
     """
     supported = frozenset(supported_model_families)
     root = Path(directory)
@@ -215,7 +218,9 @@ def load_bundle(
 
     manifest = ArtifactManifest.from_json(manifest_bytes)
     validate_compatibility(
-        manifest, expected_feature_schema_version=expected_feature_schema_version
+        manifest,
+        expected_feature_schema_version=expected_feature_schema_version,
+        supported_feature_schema_versions=supported_feature_schema_versions,
     )
     if manifest.model_family not in supported:
         raise ArtifactBundleError(

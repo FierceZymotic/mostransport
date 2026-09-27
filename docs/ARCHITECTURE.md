@@ -16,13 +16,12 @@
 Раннее прогнозирование задержки прибытия наземного транспорта (хакатон
 Мостранспорта): перевести диспетчеров из реактивного режима в проактивный.
 
-Сейчас этот репозиторий содержит ML-часть: безопасное чтение официальных
+Это общий командный репозиторий. ML-часть: безопасное чтение официальных
 данных, point-in-time признаки, обучение/оценка, Artifact Bundle,
 artifact-backed инференс для runtime (Backend → ML Contract v1) и для
-validate submission. Он становится основой общего командного репозитория:
-Backend и Frontend будут добавлены на верхнем уровне рядом с текущей
-структурой, без перестройки ML (Python-пакет, `tests/`, `scripts/`,
-`pyproject.toml`, `Dockerfile` остаются на месте).
+validate submission (Python-пакет, `tests/`, `scripts/`, `pyproject.toml`,
+`Dockerfile`). Рядом на верхнем уровне — Backend (`backend/`), Frontend
+(`frontend/`), БД (`database/`) и compose; они вне зоны ML.
 
 ## 2. Подтверждённые факты (официальный датасет + Dataset Evidence v1)
 
@@ -58,9 +57,14 @@ features/adapters.offline_context       serving: Pydantic → features/adapters.
         CanonicalBatch (features/context.py, naive UTC)
                   ▼
         build_features_from_context → frozen tabular-v1 builder (features/builder.py)
+                  ▼  канонические 37 признаков
+        features_for_schema(verified manifest.feature_schema_version)
+           ├─ tabular-v1      → 37 как есть
+           └─ runtime-safe-v1 → project_runtime_safe_features → 29 (без raw counts)
                   ▼
         inference.ArtifactPredictor ← Artifact Bundle v1 (artifacts/bundle.py + manifest.py)
-                  ▼                     (model family: catboost)
+           model family из manifest: catboost (model.cbm) | hist_gradient_boosting (model.skops)
+                  ▼
         delay_seconds (direct | residual via target/formulation.py)
           │                                   │
   inference/submission.py                serving: Contract v1 response
@@ -83,7 +87,13 @@ inference  (→ artifacts, features, target, data)
 serving    (→ inference, features)
 ```
 
-`models/` (M1 CatBoost config, train regimes) зависит только от `target/`.
+`models/` (M1 CatBoost config, HGB H0 config, train regimes) зависит только от
+`target/` и `features/schema.py`.
+
+Текущее намеренное production-сопоставление: `tabular-v1` — legacy CatBoost
+(M1, integration fixture); `runtime-safe-v1` — production-кандидат HGB H0
+(DIRECT). Инфраструктура не связывает family и схему жёстко: схему объявляет
+manifest, а модель обязана доказать совпадение своих упорядоченных признаков.
 
 ## 4. Границы ownership
 
@@ -96,8 +106,8 @@ serving    (→ inference, features)
 
 ## 5. Граница Backend ↔ ML
 
-Backend (NestJS/TypeScript) будет добавлен в этот же репозиторий как
-соседний компонент верхнего уровня; сейчас его кода здесь нет. Граница
+Backend (NestJS/TypeScript) находится в этом же репозитории как соседний
+компонент верхнего уровня (`backend/`); для ML-задач — только чтение. Граница
 между компонентами — только HTTP Contract v1
 ([`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md)); общий репозиторий
 не означает общего кода: ML не импортирует Backend, Backend не реализует
@@ -131,6 +141,10 @@ ML всё равно отбрасывает такие пакеты (defense-in-
 - `experiments/log.py` — append-only JSONL лог.
 - `models/catboost_v1.py`, `models/regimes.py` — замороженные M1 config и
   train regimes; `scripts/run_offline_baseline.py` — 6 экспериментов M1.
+- `models/hgb_v1.py` — фиксированная H0-конфигурация HGB и строгая
+  training-граница `fit_h0` (ровно `runtime-safe-v1`, NaN допустимы, ±inf нет).
+- `data/safe_deviation.py` — offline point-in-time-safe текущее отклонение
+  (факт `<= T`) для `offline_context(..., current_deviation_seconds=...)`.
 
 ## 7. Признаки, artifact, inference, serving
 
@@ -138,20 +152,27 @@ ML всё равно отбрасывает такие пакеты (defense-in-
   `features/schema.py`): `event_time <= T`, окна `(T-w, T]`, strict GPS,
   fail-fast на `time_fact_begin`/`target_delay_s`/`target_class`.
 - `features/context.py` — `CanonicalPoint`/`CanonicalTelemetry`/
-  `CanonicalBatch` и единственный вход `build_features_from_context`.
+  `CanonicalBatch`, единственный вход `build_features_from_context`,
+  единственная проекция `tabular-v1` → `runtime-safe-v1`
+  (`project_runtime_safe_features`) и выбор признаков схемы модели
+  (`features_for_schema`).
 - `features/adapters.py` — нормализация: `offline_context` (official кадры)
   и `runtime_context` (Contract v1: aware ISO → naive UTC, naive → ошибка,
   случайно пришедшие пакеты `> T` отбрасываются defensively, история не
   обрезается). Канонический контекст допускает отсутствующую скорость
   исторических данных; wire-инвариант `speed` — в `serving/schemas.py`.
 - `artifacts/manifest.py` — ArtifactManifest v1 (канонический JSON, SHA-256,
-  совместимость по `feature_schema_version`); `artifacts/bundle.py` —
+  совместимость по `feature_schema_version`: одна закреплённая схема или любая
+  из поддерживаемых вызывающим); `artifacts/bundle.py` —
   Artifact Bundle v1 (`manifest.json` + модель + `bundle.json` с хешами;
   проверка до загрузки модели); `artifacts/metadata.py` — LEGACY.
-- `inference/` — `ArtifactPredictor` (bundle → builder → модель →
-  direct/residual), `export_bundle`, model family `catboost` = обученная
-  скалярная регрессия (проверяются сохранённый objective и форма выхода
-  самой модели, не класс обёртки), validate submission.
+- `inference/` — `ArtifactPredictor` (bundle → builder → признаки схемы из
+  manifest → модель → direct/residual; `cur_dev_s` для residual — из
+  канонических признаков), `export_bundle` (обе схемы), validate submission,
+  model families: `catboost` (legacy; проверяются сохранённый objective и
+  форма выхода самой модели, не класс обёртки) и `hist_gradient_boosting`
+  (ровно `HistGradientBoostingRegressor`; `skops` без pickle, доверен только
+  `TreePredictor`, деревья структурно проверяются до любого `predict`).
 - `serving/` — Contract v1 (`POST /api/v1/predict`), `/health`, `/ready`;
   `artifact_app.py` (production), `mock_app.py` (явный mock). Provisional
   v0 (`/api/v1/predict/batch`, непрозрачный `context`) удалён.
@@ -197,8 +218,10 @@ parity, а не полная parity источников:
 - CSV имеет шаг telemetry ~12–15 с, эмулятор может присылать ~1 Гц —
   count-признаки (`rows_*`, `valid_gps_count_*`) могут быть смещены.
 
-Это modeling-риски до финальной модели; `tabular-v1` не меняется и молча не
-нормализуется.
+Для production-кандидата (`runtime-safe-v1`) count-признаки исключены, а
+offline-отклонение считается point-in-time-safe (`data/safe_deviation.py`);
+`tabular-v1` не меняется и молча не нормализуется. Совпадение семантики
+отклонения с тем, что присылает Backend, остаётся интеграционным риском.
 
 ## 13. Конфиденциальность данных / политика репозитория
 
@@ -214,8 +237,10 @@ parity, а не полная parity источников:
 ## 14. Инварианты
 
 - Метрика — MAE; target, horizon и leakage-правила — см. §2.
-- `tabular-v1` заморожен; новые признаки — новой версией схемы.
-- Один Feature Builder для offline и runtime.
+- `tabular-v1` (37) и `runtime-safe-v1` (29) заморожены; новые признаки — новой
+  версией схемы.
+- Один Feature Builder для offline и runtime; `runtime-safe-v1` — только
+  проекция его выхода. Схему признаков модели объявляет проверенный manifest.
 - Runtime-время — только aware ISO-8601; внутри — naive UTC.
 - Модель загружается только из проверенного Artifact Bundle v1, после
   проверки хешей, manifest'а, совместимости схемы, family и формулировки;
@@ -227,11 +252,13 @@ parity, а не полная parity источников:
 
 ## 15. Открытые вопросы (modeling/research, не инфраструктура)
 
-- Валидность группы B (train-only/synthetic-candidate) для обучения.
-- DIRECT vs RESIDUAL, режим обучения, финальный выбор модели.
-- Сдвиг распределения count-признаков из-за частоты telemetry и соответствие
-  исторических строк без навигационных полей runtime-пакетам.
-- Official `cur_dev_s` vs runtime `current_deviation_seconds` (см. §12).
+Решено research (train-only): группа B не используется (клоны группы A),
+production-кандидат — HGB H0 DIRECT на `runtime-safe-v1`, обучение на группе A;
+финальный official artifact — этап P3. Открыто:
+
+- соответствие исторических строк без навигационных полей runtime-пакетам;
+- совпадение runtime `current_deviation_seconds` Backend'а с offline
+  safe-семантикой (см. §12).
 
 ## 16. Явные non-goals (для ML-части)
 

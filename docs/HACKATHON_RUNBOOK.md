@@ -11,11 +11,15 @@
 | Первая модель | безопасные loaders, `tabular-v1`, CatBoost, 6 заранее заданных экспериментов | `m1-tabular-baseline-v1` |
 | Паритет offline ↔ online | `CanonicalBatch`, один builder для обоих путей | `m2-i1-streaming-context-v1` |
 | Инфраструктура | aware-UTC Contract v1, ArtifactManifest, Artifact Bundle v1, `ArtifactPredictor`, `POST /api/v1/predict`, validate submission | M2 infrastructure closure |
+| P1 runtime-safe contract | frozen `runtime-safe-v1` (29, проекция 37 → 29), offline safe current deviation, override в `offline_context` | `ml-runtime-safe-v1` |
+| P2 HGB artifact capability | family `hist_gradient_boosting` (`skops`), H0 (`models/hgb_v1.py`), `ArtifactPredictor` выбирает схему по manifest | P2 (синтетические artifacts; official artifact не обучен) |
 
 ## Цикл modeling → artifact → submission/serving
 
-Любой кандидат, совместимый с `tabular-v1`, проходит один и тот же путь без
-изменения serving/адаптеров/loader'ов/submission:
+Любой кандидат поддерживаемой схемы (`tabular-v1` или `runtime-safe-v1`)
+проходит один и тот же путь без изменения serving/адаптеров/loader'ов/submission.
+Пример ниже — legacy CatBoost/`tabular-v1`; путь production-кандидата HGB — в
+разделе «P2 → P3» ниже.
 
 ```python
 from datetime import UTC, datetime
@@ -83,8 +87,29 @@ MOSTRANSPORT_ARTIFACT_DIR=artifacts/<version> \
   - **частота telemetry**: CSV ~12–15 с vs эмулятор ~1 Гц → count-признаки
     (`rows_*`, `valid_gps_count_*`) могут быть смещены; telemetry молча не
     прореживать;
-  - **валидность группы B** (train-only/synthetic-candidate);
-  - direct vs residual и финальный выбор модели.
+  - ~~валидность группы B~~ — решено research: не использовать (клоны группы A);
+  - ~~direct vs residual и финальный выбор модели~~ — решено research: HGB H0
+    DIRECT на `runtime-safe-v1` (без raw counts, safe deviation), только группа A.
+
+## P2 → P3: production-кандидат HGB
+
+P2 даёт только возможность обслуживать artifact (синтетические fixtures).
+P3 (не сделано): official Group A training + OOF reproduction + final bundle.
+
+1. Group A — `load_shared_real_vehicle_ids` (плановые поля test schedule);
+   точки, telemetry и план train — `load_official_split(root, "train")`.
+2. Safe deviation: факты `train/schedule.csv` в порядке CSV
+   (`usecols=data.safe_deviation.SCHEDULE_FACT_COLUMNS`) →
+   `safe_current_deviation_seconds(points, facts)`.
+3. Признаки: `offline_context(points, telemetry, plan,
+   current_deviation_seconds=safe)` → `build_features_from_context` →
+   `project_runtime_safe_features` (ровно 29).
+4. Воспроизвести research GroupKFold OOF (≈ 77.34 MAE) — acceptance gate.
+5. `fit_h0(X, y)` на всей Group A → `ArtifactManifest(model_family=
+   "hist_gradient_boosting", feature_schema_version="runtime-safe-v1",
+   target_formulation="direct", model_params=dict(HGB_H0_PARAMS), ...)` →
+   `export_bundle` → проверка через `ArtifactPredictor`, submission и
+   `scripts/smoke_contract_v1.py --expected-feature-schema-version runtime-safe-v1`.
 
 При доменной неоднозначности, не закрытой официальным ТЗ или Dataset
 Evidence v1, AI-агент обязан остановиться и спросить, а не угадывать

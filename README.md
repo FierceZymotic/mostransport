@@ -6,18 +6,21 @@ ML-часть хакатона Мостранспорта: раннее прог
 `−` опережение) на целевом действии расписания в горизонте `(T+10м, T+15м]`.
 Официальная метрика — MAE.
 
-Сейчас репозиторий содержит рабочую ML-часть и становится начальной
-основой общего командного репозитория: Backend и Frontend будут добавлены
-в этот же репозиторий на верхнем уровне (рядом с текущей структурой; ML не
-переносится). Пока их здесь нет. Граница: Backend присылает доменные факты +
-сырую историю telemetry по Backend → ML Contract v1, ML считает
-model-specific признаки и прогноз. Подробнее —
-[`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
+Это общий командный репозиторий: рядом с ML-частью (`src/mostransport_ml`,
+`scripts/`, `tests/`) лежат Backend (`backend/`), Frontend (`frontend/`), БД
+(`database/`) и `docker-compose.yml` — они вне зоны владения ML и для ML-задач
+только читаются. Граница: Backend присылает доменные факты + сырую историю
+telemetry по Backend → ML Contract v1, ML считает model-specific признаки и
+прогноз. Подробнее — [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 
-**Статус:** ML-инфраструктура готова (Contract v1 согласован и заморожен,
-serving, Artifact Bundle, validate submission). Финальная модель **не
-выбрана**: `integration-fixture-v1` — синтетический fixture только для
-проверки интеграции, не модель качества.
+**Статус ML:** research закрыт — выбран `HistGradientBoostingRegressor`,
+DIRECT, схема признаков `runtime-safe-v1` (29 признаков, без raw packet
+counts), фиксированная конфигурация H0 (консервативный кандидат, не доказанный
+оптимум). Инфраструктура поддерживает оба поколения artifact'ов: legacy
+CatBoost/`tabular-v1` и HGB/`runtime-safe-v1` (P2). Финальный artifact, обученный
+на официальных данных, **ещё не создан** (P3). `integration-fixture-v1` и
+`integration-fixture-hgb-v1` — синтетические fixtures только для проверки
+интеграции, не модели качества.
 
 ## С чего начать чтение
 
@@ -51,9 +54,16 @@ serving, Artifact Bundle, validate submission). Финальная модель 
   `ArtifactManifest` v1, Artifact Bundle v1, `ArtifactPredictor`,
   serving `POST /api/v1/predict`, безопасный validate inference и
   `scripts/make_submission.py`.
+- **P1** (`ml-runtime-safe-v1`) — frozen схема `runtime-safe-v1` (строгая
+  проекция 37 → 29 канонического builder'а), offline point-in-time-safe
+  current deviation и его явная подача в `offline_context`.
+- **P2** — model family `hist_gradient_boosting` (сериализация `skops`, без
+  pickle), конфигурация H0 (`models/hgb_v1.py`), `ArtifactPredictor`
+  выбирает схему признаков по проверенному manifest (`tabular-v1` или
+  `runtime-safe-v1`).
 
-Не реализовано и вне ML-инфраструктуры: выбор финальной модели,
-исследование признаков/режимов обучения, probability/reason, Backend/Frontend.
+Не реализовано: финальное обучение HGB H0 на официальной Group A и финальный
+artifact (P3), probability/reason.
 
 ## Быстрый старт: offline
 
@@ -77,6 +87,11 @@ MOSTRANSPORT_ARTIFACT_DIR=/tmp/mostransport-integration-artifact \
   uv run uvicorn mostransport_ml.serving.artifact_app:create_app_from_env --factory
 uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000
 ```
+
+HGB/`runtime-safe-v1` integration fixture — тот же builder с
+`--model-family hist_gradient_boosting`; smoke проверяет согласованность
+`model_version`/`feature_schema_version` между `/ready` и ответом, схему можно
+закрепить `--expected-feature-schema-version runtime-safe-v1`.
 
 Настоящая модель подключается заменой `MOSTRANSPORT_ARTIFACT_DIR` на её
 Artifact Bundle v1. Затем: `GET /health`, `GET /ready`, `POST /api/v1/predict`,

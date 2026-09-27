@@ -5,8 +5,14 @@
 `POST /api/v1/predict` с каноническим примером запроса и проверка формы и
 семантики ответа. Только stdlib; локальные HTTP-прокси игнорируются.
 
+Проверяется согласованность контракта, а не поколение модели: `/ready` и ответ
+прогноза обязаны сообщать одни и те же непустые `model_version` и
+`feature_schema_version` (схему признаков загруженного artifact'а). Конкретную
+схему можно закрепить `--expected-feature-schema-version`.
+
 Запуск:
     uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000
+    uv run python scripts/smoke_contract_v1.py --expected-feature-schema-version runtime-safe-v1
 """
 
 from __future__ import annotations
@@ -25,8 +31,6 @@ from typing import Any
 DEFAULT_PAYLOAD = (
     Path(__file__).resolve().parents[1] / "tests" / "fixtures" / "contract_v1_request.json"
 )
-EXPECTED_FEATURE_SCHEMA_VERSION = "tabular-v1"
-
 Fetch = Callable[[str, str, dict | None], tuple[int, Any]]
 
 
@@ -63,7 +67,20 @@ def _aware(value: Any, name: str) -> datetime:
     return parsed
 
 
-def check_prediction(request: dict, status: int, body: Any, *, expected_model: str | None) -> float:
+def _non_empty(value: Any, name: str) -> str:
+    if not isinstance(value, str) or not value:
+        raise SmokeFailure(f"{name} must be a non-empty string")
+    return value
+
+
+def check_prediction(
+    request: dict,
+    status: int,
+    body: Any,
+    *,
+    expected_model: str | None,
+    expected_schema: str | None,
+) -> float:
     """Проверить ответ Contract v1; вернуть delay_seconds."""
     if status != 200 or not isinstance(body, dict):
         raise SmokeFailure(f"POST /api/v1/predict returned HTTP {status}")
@@ -84,16 +101,18 @@ def check_prediction(request: dict, status: int, body: Any, *, expected_model: s
     if abs(target_time - (planned + timedelta(seconds=delay))) > timedelta(microseconds=1):
         raise SmokeFailure("prediction.target_time != target_time_begin + delay_seconds")
     _aware(body.get("generated_at"), "generated_at")
-    if not isinstance(body.get("model_version"), str) or not body["model_version"]:
-        raise SmokeFailure("model_version must be a non-empty string")
+    _non_empty(body.get("model_version"), "model_version")
     if expected_model is not None and body["model_version"] != expected_model:
         raise SmokeFailure("model_version differs from /ready")
-    if body.get("feature_schema_version") != EXPECTED_FEATURE_SCHEMA_VERSION:
-        raise SmokeFailure(f"feature_schema_version must be {EXPECTED_FEATURE_SCHEMA_VERSION}")
+    _non_empty(body.get("feature_schema_version"), "feature_schema_version")
+    if expected_schema is not None and body["feature_schema_version"] != expected_schema:
+        raise SmokeFailure("feature_schema_version differs from /ready")
     return float(delay)
 
 
-def run_smoke(fetch: Fetch, request: dict) -> list[str]:
+def run_smoke(
+    fetch: Fetch, request: dict, *, expected_feature_schema_version: str | None = None
+) -> list[str]:
     lines = []
     status, body = fetch("GET", "/health", None)
     if status != 200 or body != {"status": "ok"}:
@@ -103,15 +122,19 @@ def run_smoke(fetch: Fetch, request: dict) -> list[str]:
     status, body = fetch("GET", "/ready", None)
     if status != 200 or not isinstance(body, dict) or body.get("ready") is not True:
         raise SmokeFailure(f"GET /ready returned HTTP {status} (artifact not loaded?)")
-    if body.get("feature_schema_version") != EXPECTED_FEATURE_SCHEMA_VERSION:
+    model_version = _non_empty(body.get("model_version"), "/ready model_version")
+    schema = _non_empty(body.get("feature_schema_version"), "/ready feature_schema_version")
+    if expected_feature_schema_version is not None and schema != expected_feature_schema_version:
         raise SmokeFailure(
-            f"/ready feature_schema_version must be {EXPECTED_FEATURE_SCHEMA_VERSION}"
+            f"/ready feature_schema_version is {schema!r}, "
+            f"expected {expected_feature_schema_version!r}"
         )
-    model_version = body.get("model_version")
-    lines.append(f"GET /ready: ready model_version={model_version}")
+    lines.append(f"GET /ready: ready model_version={model_version} feature_schema_version={schema}")
 
     status, body = fetch("POST", "/api/v1/predict", request)
-    delay = check_prediction(request, status, body, expected_model=model_version)
+    delay = check_prediction(
+        request, status, body, expected_model=model_version, expected_schema=schema
+    )
     lines.append(
         f"POST /api/v1/predict: ok delay_seconds={delay} "
         f"target_time={body['prediction']['target_time']} generated_at={body['generated_at']}"
@@ -123,10 +146,19 @@ def main(argv: list[str] | None = None, fetch: Fetch | None = None) -> int:
     parser = argparse.ArgumentParser(description="Contract v1 integration smoke")
     parser.add_argument("--base-url", default="http://127.0.0.1:8000")
     parser.add_argument("--payload", type=Path, default=DEFAULT_PAYLOAD)
+    parser.add_argument(
+        "--expected-feature-schema-version",
+        help="pin the artifact feature schema (e.g. runtime-safe-v1); default: any, consistent",
+    )
     args = parser.parse_args(argv)
     request = json.loads(args.payload.read_text(encoding="utf-8"))
     try:
-        for line in run_smoke(fetch or http_fetch(args.base_url), request):
+        lines = run_smoke(
+            fetch or http_fetch(args.base_url),
+            request,
+            expected_feature_schema_version=args.expected_feature_schema_version,
+        )
+        for line in lines:
             print(line)
     except (SmokeFailure, urllib.error.URLError, OSError, ValueError) as exc:
         print(f"SMOKE FAILED: {exc}", file=sys.stderr)

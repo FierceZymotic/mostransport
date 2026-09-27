@@ -3,11 +3,15 @@
 Один и тот же путь для runtime (Contract v1 → runtime adapter) и offline
 (official данные → offline adapter):
 
-    CanonicalBatch → build_features_from_context (tabular-v1) → model.predict
-        → final_prediction(target_formulation) → delay_seconds
+    CanonicalBatch → build_features_from_context (канонический tabular-v1)
+        → features_for_schema(manifest.feature_schema_version)
+            (tabular-v1 как есть | runtime-safe-v1 через P1-проекцию)
+        → model.predict → final_prediction(target_formulation) → delay_seconds
 
-Никакой второй feature-логики, выбора модели, clipping, калибровки,
-вероятностей или reason здесь нет.
+Схему признаков модели объявляет проверенный manifest, модель обязана
+доказать совпадение своих упорядоченных имён признаков. Никакой второй
+feature-логики, выбора модели, clipping, калибровки, вероятностей или reason
+здесь нет.
 """
 
 from __future__ import annotations
@@ -30,8 +34,17 @@ from mostransport_ml.artifacts.manifest import (
     UnsupportedArtifactSchemaError,
     validate_compatibility,
 )
-from mostransport_ml.features.context import CanonicalBatch, build_features_from_context
-from mostransport_ml.features.schema import FEATURE_NAMES, FEATURE_SCHEMA_VERSION
+from mostransport_ml.features.context import (
+    CanonicalBatch,
+    build_features_from_context,
+    features_for_schema,
+)
+from mostransport_ml.features.schema import (
+    FEATURE_NAMES,
+    SUPPORTED_FEATURE_SCHEMA_VERSIONS,
+    UnsupportedFeatureSchemaError,
+    feature_names_for_schema,
+)
 from mostransport_ml.inference.model_families import (
     MODEL_FAMILIES,
     LoadedModel,
@@ -53,9 +66,10 @@ class PredictionOutputError(RuntimeError):
     """Модель вернула выход неверной формы или нефинитные значения."""
 
 
-def _check_model_features(family_name: str, model: object) -> None:
+def _check_model_features(family_name: str, model: object, expected: tuple[str, ...]) -> None:
+    """Упорядоченные имена признаков модели == схема из проверенного manifest."""
     names = MODEL_FAMILIES[family_name].feature_names(model)
-    if names is not None and list(names) != list(FEATURE_NAMES):
+    if names is None or list(names) != list(expected):
         raise ArtifactLoadError("model_feature_mismatch")
 
 
@@ -71,14 +85,22 @@ class ArtifactPredictor:
         cls,
         bundle_dir: str | Path,
         *,
-        expected_feature_schema_version: str = FEATURE_SCHEMA_VERSION,
+        expected_feature_schema_version: str | None = None,
     ) -> ArtifactPredictor:
-        """Проверить bundle и загрузить модель. Все проверки — до загрузки модели."""
+        """Проверить bundle и загрузить модель. Все проверки — до загрузки модели.
+
+        По умолчанию принимается любая схема признаков, поддерживаемая этим
+        кодом (`SUPPORTED_FEATURE_SCHEMA_VERSIONS`); строка
+        `expected_feature_schema_version` закрепляет ровно одну схему.
+        """
+        schema_mode = (
+            {"supported_feature_schema_versions": SUPPORTED_FEATURE_SCHEMA_VERSIONS}
+            if expected_feature_schema_version is None
+            else {"expected_feature_schema_version": expected_feature_schema_version}
+        )
         try:
             verified = load_bundle(
-                bundle_dir,
-                expected_feature_schema_version=expected_feature_schema_version,
-                supported_model_families=MODEL_FAMILIES,
+                bundle_dir, supported_model_families=MODEL_FAMILIES, **schema_mode
             )
         except ArtifactBundleError:
             raise ArtifactLoadError("bundle_invalid") from None
@@ -89,6 +111,10 @@ class ArtifactPredictor:
         except ManifestValidationError:
             raise ArtifactLoadError("manifest_invalid") from None
         manifest = verified.manifest
+        try:
+            expected_features = feature_names_for_schema(manifest.feature_schema_version)
+        except UnsupportedFeatureSchemaError:
+            raise ArtifactLoadError("incompatible_feature_schema") from None
         if manifest.target_formulation not in FORMULATIONS:
             raise ArtifactLoadError("unsupported_target_formulation")
         try:
@@ -97,7 +123,7 @@ class ArtifactPredictor:
             raise ArtifactLoadError("model_task_incompatible") from None
         except ModelFamilyError:
             raise ArtifactLoadError("model_load_failed") from None
-        _check_model_features(manifest.model_family, model)
+        _check_model_features(manifest.model_family, model, expected_features)
         return cls(verified, model)
 
     # ------------------------------------------------------------------ metadata
@@ -119,6 +145,11 @@ class ArtifactPredictor:
     def feature_schema_version(self) -> str:
         return self.manifest.feature_schema_version
 
+    @property
+    def feature_names(self) -> tuple[str, ...]:
+        """Упорядоченные признаки, которые получает модель (схема из manifest)."""
+        return feature_names_for_schema(self.manifest.feature_schema_version)
+
     # ------------------------------------------------------------------ inference
 
     def predict(self, batch: CanonicalBatch) -> np.ndarray:
@@ -127,17 +158,22 @@ class ArtifactPredictor:
             raise TypeError("batch must be a CanonicalBatch")
         if not batch.points:
             return np.empty(0, dtype=float)
-        features = build_features_from_context(batch)
-        if tuple(features.columns) != FEATURE_NAMES:
+        point_ids = [p.point_id for p in batch.points]
+        canonical = build_features_from_context(batch)
+        if tuple(canonical.columns) != FEATURE_NAMES:
             raise PredictionOutputError("feature columns differ from tabular-v1")
-        if list(features.index) != [p.point_id for p in batch.points]:
+        features = features_for_schema(canonical, self.manifest.feature_schema_version)
+        if tuple(features.columns) != self.feature_names:
+            raise PredictionOutputError("model features differ from the manifest schema")
+        if list(canonical.index) != point_ids or list(features.index) != point_ids:
             raise PredictionOutputError("feature rows differ from batch point order")
         raw = np.asarray(self._model.predict(features), dtype=float).reshape(-1)
         if raw.shape != (len(batch.points),):
             raise PredictionOutputError("model returned an unexpected number of outputs")
         try:
+            # Текущее отклонение — из канонических признаков, та же семантика для любой схемы.
             final = final_prediction(
-                raw, features["cur_dev_s"].to_numpy(), self.manifest.target_formulation
+                raw, canonical["cur_dev_s"].to_numpy(), self.manifest.target_formulation
             )
         except ValueError:
             raise PredictionOutputError("model output or current deviation is not finite") from None
@@ -149,12 +185,16 @@ def export_bundle(
 ) -> BundleDescriptor:
     """Сериализовать обученную модель и записать Artifact Bundle v1.
 
-    Проверяет, что manifest совместим с `tabular-v1`, family поддерживается,
-    формулировка известна, модель — скалярная регрессия задержки (для
-    `catboost`: обученный `CatBoostRegressor`, см. `model_families`) и обучена
-    ровно на `FEATURE_NAMES`. Ошибка задачи модели — `ModelTaskError`.
+    Проверяет, что manifest объявляет поддерживаемую схему признаков, family
+    поддерживается, формулировка известна, модель — скалярная регрессия
+    задержки (см. `model_families`) и обучена ровно на упорядоченных признаках
+    схемы из manifest. Ошибка задачи модели — `ModelTaskError`. Bundle
+    записывается только после всех проверок.
     """
-    validate_compatibility(manifest, expected_feature_schema_version=FEATURE_SCHEMA_VERSION)
+    validate_compatibility(
+        manifest, supported_feature_schema_versions=SUPPORTED_FEATURE_SCHEMA_VERSIONS
+    )
+    expected_features = feature_names_for_schema(manifest.feature_schema_version)
     family = MODEL_FAMILIES.get(manifest.model_family)
     if family is None:
         raise ArtifactBundleError(f"model_family {manifest.model_family!r} is not supported")
@@ -162,6 +202,9 @@ def export_bundle(
         raise ArtifactBundleError(f"unsupported target_formulation {manifest.target_formulation!r}")
     model_bytes = family.serialize(model)
     names = family.feature_names(model)
-    if names is None or list(names) != list(FEATURE_NAMES):
-        raise ArtifactBundleError("model must be trained on exactly tabular-v1 FEATURE_NAMES")
+    if names is None or list(names) != list(expected_features):
+        raise ArtifactBundleError(
+            "model must be trained on exactly the ordered "
+            f"{manifest.feature_schema_version} feature names"
+        )
     return write_bundle(directory, manifest, model_bytes, family.model_filename)

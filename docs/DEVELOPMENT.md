@@ -1,7 +1,7 @@
 # DEVELOPMENT — практическое руководство разработчика
 
-Команды и workflow для ML-части репозитория (Python). Backend/Frontend,
-когда будут добавлены в репозиторий, описываются своими документами. Все
+Команды и workflow для ML-части репозитория (Python). Backend/Frontend
+(`backend/`, `frontend/`) описываются своими документами. Все
 команды ниже выполняются из корня клонированного репозитория. Общая картина
 проекта — в
 [`PROJECT_KNOWLEDGE.md`](PROJECT_KNOWLEDGE.md), технические границы — в
@@ -146,7 +146,7 @@ notebook Dataset Evidence v1 содержит собственные lint-зам
 
 ## Граница с Backend/Frontend
 
-Backend и Frontend будут добавлены в этот репозиторий как соседние
-каталоги верхнего уровня. Задача на ML не меняет их код (и наоборот);
+Backend и Frontend лежат в этом репозитории как соседние каталоги верхнего
+уровня (`backend/`, `frontend/`). Задача на ML не меняет их код (и наоборот);
 взаимодействие — только через Backend → ML Contract v1
 ([`BACKEND_ML_INTEGRATION.md`](BACKEND_ML_INTEGRATION.md)).

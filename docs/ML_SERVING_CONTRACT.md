@@ -13,8 +13,10 @@ v0 (`POST /api/v1/predict/batch`, непрозрачный `context`) удалё
 | Форма запроса, типы, aware-время, `speed` — конечное число (не `null`), горизонт `(10, 15]`, запрет лишних/запрещённых полей | `serving/schemas.py` (Pydantic, → `422`) |
 | aware ISO → naive UTC; naive-время — ошибка; отбрасывание пакетов `> T` (defense-in-depth) | `features/adapters.py::runtime_context` |
 | `event_time <= T`, окна `(T−w, T]`, strict GPS, признаки `tabular-v1` | `features/builder.py` (заморожен, M1) |
-| Целостность bundle, совместимость схемы признаков, family | `artifacts/bundle.py`, `artifacts/manifest.py` |
+| Целостность bundle, совместимость схемы признаков (любая поддерживаемая: `tabular-v1`, `runtime-safe-v1`), family | `artifacts/bundle.py`, `artifacts/manifest.py`, `features/schema.py` |
+| Признаки схемы из manifest: `tabular-v1` как есть, `runtime-safe-v1` — P1-проекция 37 → 29; имена признаков модели == схема manifest | `features/context.py::features_for_schema`, `inference/predictor.py` |
 | `catboost` = обученная скалярная регрессия (objective и форма выхода самой модели) | `inference/model_families.py` |
+| `hist_gradient_boosting` = ровно `HistGradientBoostingRegressor`; `skops` без pickle, доверен только `TreePredictor`, деревья проверяются до `predict` | `inference/model_families.py` |
 | direct/residual → `delay_seconds` | `target/formulation.py::final_prediction` (тот же, что в M1) |
 | readiness, контракт predictor'а, `target_time = target_time_begin + delay_seconds`, `generated_at` | `serving/service.py` |
 | эндпоинты, санитизация `422`, коды `500`/`503`, логирование | `serving/app.py` |
@@ -53,6 +55,8 @@ Pydantic-схема терпимее канонического контракт
   ошибки, OpenAPI;
 - `tests/test_contract_v1_fixture.py` — канонический пример и граничные случаи;
 - `tests/test_runtime_timestamps.py` — время;
-- `tests/test_catboost_task_safety.py` — тип модели;
+- `tests/test_catboost_task_safety.py` — тип модели CatBoost;
+- `tests/test_hgb_artifact.py` — HGB family, выбор схемы по manifest, HTTP E2E
+  на реальном HGB artifact;
 - `tests/test_e2e_infrastructure.py`, `tests/test_integration_handoff.py` —
   end-to-end, integration artifact, live smoke.

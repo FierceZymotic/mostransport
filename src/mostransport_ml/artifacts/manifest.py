@@ -18,7 +18,7 @@ import hashlib
 import json
 import math
 import re
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
@@ -333,27 +333,55 @@ def read_manifest(path: str | Path) -> ArtifactManifest:
     return ArtifactManifest.from_json(Path(path).read_bytes())
 
 
-def validate_compatibility(
-    manifest: ArtifactManifest | Mapping[str, Any], *, expected_feature_schema_version: str
-) -> ArtifactManifest:
-    """Проверить, что manifest поддерживаемой схемы и собран под ожидаемую схему признаков.
+def _accepted_feature_schemas(
+    expected: str | None, supported: Iterable[str] | None
+) -> tuple[frozenset[str], str]:
+    """Ровно один режим: точная схема (`expected`) или набор поддерживаемых (`supported`)."""
+    if (expected is None) == (supported is None):
+        raise ValueError(
+            "pass exactly one of expected_feature_schema_version or "
+            "supported_feature_schema_versions"
+        )
+    if expected is not None:
+        if not isinstance(expected, str) or not expected:
+            raise ValueError("expected_feature_schema_version must be a non-empty string")
+        return frozenset({expected}), repr(expected)
+    if isinstance(supported, str | bytes):
+        raise ValueError("supported_feature_schema_versions must be a collection, not a string")
+    accepted = frozenset(supported)
+    if not accepted or not all(isinstance(v, str) and v for v in accepted):
+        raise ValueError("supported_feature_schema_versions must be non-empty strings")
+    return accepted, f"one of {sorted(accepted)}"
 
-    Проверяется: версия схемы manifest'а, корректность и конечность всех
-    метаданных (при разборе/конструировании), точное совпадение
-    `feature_schema_version`. Не проверяется и не решается: загрузка модели,
-    inference, Backend-контракт, выбор модели/режима, «достаточно ли хорош» MAE.
+
+def validate_compatibility(
+    manifest: ArtifactManifest | Mapping[str, Any],
+    *,
+    expected_feature_schema_version: str | None = None,
+    supported_feature_schema_versions: Iterable[str] | None = None,
+) -> ArtifactManifest:
+    """Проверить, что manifest поддерживаемой схемы и собран под допустимую схему признаков.
+
+    Вызывающий задаёт ровно один режим: `expected_feature_schema_version`
+    (точная схема) или `supported_feature_schema_versions` (любая из
+    поддерживаемых им схем). Проверяется: версия схемы manifest'а, корректность
+    и конечность всех метаданных (при разборе/конструировании), принадлежность
+    `feature_schema_version` допустимому набору. Не проверяется и не решается:
+    загрузка модели, inference, Backend-контракт, выбор модели/режима,
+    «достаточно ли хорош» MAE.
     """
-    if not isinstance(expected_feature_schema_version, str) or not expected_feature_schema_version:
-        raise ValueError("expected_feature_schema_version must be a non-empty string")
+    accepted, described = _accepted_feature_schemas(
+        expected_feature_schema_version, supported_feature_schema_versions
+    )
     if not isinstance(manifest, ArtifactManifest):
         manifest = ArtifactManifest.from_dict(manifest)
     if manifest.artifact_schema_version not in SUPPORTED_ARTIFACT_SCHEMA_VERSIONS:
         raise UnsupportedArtifactSchemaError(
             f"artifact_schema_version {manifest.artifact_schema_version!r} is not supported"
         )
-    if manifest.feature_schema_version != expected_feature_schema_version:
+    if manifest.feature_schema_version not in accepted:
         raise ArtifactCompatibilityError(
             f"feature schema mismatch: artifact built for {manifest.feature_schema_version!r}, "
-            f"expected {expected_feature_schema_version!r}"
+            f"expected {described}"
         )
     return manifest

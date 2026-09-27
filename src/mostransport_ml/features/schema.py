@@ -6,10 +6,14 @@ provenance, а не признак.
 
 `runtime-safe-v1` не вычисляется отдельно: это строгая проекция выхода того
 же канонического builder'а (`features.context.project_runtime_safe_features`).
-Активные artifact/inference/serving пока работают только с `tabular-v1`.
+Какую схему потребляет модель, объявляет её проверенный manifest
+(`feature_schema_version`); `feature_names_for_schema` — единственный lookup
+поддерживаемых схем.
 """
 
 from __future__ import annotations
+
+from types import MappingProxyType
 
 FEATURE_SCHEMA_VERSION = "tabular-v1"
 
@@ -127,3 +131,27 @@ FORBIDDEN_INPUT_COLUMNS: frozenset[str] = frozenset(
 
 HORIZON_MIN_EXCLUSIVE_MINUTES = 10.0
 HORIZON_MAX_INCLUSIVE_MINUTES = 15.0
+
+# Схемы признаков, которые этот код умеет подавать модели: версия → точный
+# упорядоченный список признаков. Других схем нет.
+SUPPORTED_FEATURE_SCHEMAS = MappingProxyType(
+    {
+        FEATURE_SCHEMA_VERSION: FEATURE_NAMES,
+        RUNTIME_SAFE_FEATURE_SCHEMA_VERSION: RUNTIME_SAFE_FEATURE_NAMES,
+    }
+)
+SUPPORTED_FEATURE_SCHEMA_VERSIONS: frozenset[str] = frozenset(SUPPORTED_FEATURE_SCHEMAS)
+
+
+class UnsupportedFeatureSchemaError(ValueError):
+    """`feature_schema_version` не поддерживается этим кодом."""
+
+
+def feature_names_for_schema(version: str) -> tuple[str, ...]:
+    """Точный упорядоченный список признаков поддерживаемой схемы; иначе ошибка."""
+    if not isinstance(version, str) or version not in SUPPORTED_FEATURE_SCHEMAS:
+        raise UnsupportedFeatureSchemaError(
+            f"unsupported feature_schema_version {version!r}; "
+            f"supported: {sorted(SUPPORTED_FEATURE_SCHEMA_VERSIONS)}"
+        )
+    return SUPPORTED_FEATURE_SCHEMAS[version]

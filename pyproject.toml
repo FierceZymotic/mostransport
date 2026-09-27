@@ -10,6 +10,7 @@ dependencies = [
     "scikit-learn>=1.4",
     "pyarrow>=15.0",
     "catboost>=1.2",
+    "skops>=0.16",
 ]
 
 [project.optional-dependencies]

@@ -12,7 +12,9 @@
 
 ## 0. Быстрый старт (без финальной модели)
 
-Финальная модель ещё не выбрана — для интеграции есть детерминированный
+Research выбрал production-кандидата (HGB H0, DIRECT, схема признаков
+`runtime-safe-v1`), но финальный artifact, обученный на официальных данных,
+ещё не создан. Для интеграции есть детерминированный
 **integration-only artifact** (**INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**): крошечная синтетическая модель.
 
 > **INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL.**
@@ -43,29 +45,35 @@ uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000
 Схема работающего сервиса: `http://127.0.0.1:8000/docs` (Swagger UI) и
 `http://127.0.0.1:8000/openapi.json`. Датасет организаторов для этого не нужен.
 
-**Замена на настоящую модель:** когда будет выбран competition artifact
-(Artifact Bundle v1 под `tabular-v1`), меняется только
-`MOSTRANSPORT_ARTIFACT_DIR`. Схемы запроса/ответа и код Backend не меняются.
+**Замена на настоящую модель:** когда будет готов финальный artifact
+(Artifact Bundle v1; у выбранного HGB — схема признаков `runtime-safe-v1`),
+меняется только `MOSTRANSPORT_ARTIFACT_DIR`. Схемы запроса/ответа и код Backend
+не меняются; в `/ready` и ответе изменятся значения `model_version` и
+`feature_schema_version`. Integration artifact той же схемы, что у выбранного
+HGB: `scripts/build_integration_artifact.py --model-family hist_gradient_boosting`
+(`integration-fixture-hgb-v1`, тоже INTEGRATION TEST ONLY).
 
 ## 1. Состояние системы
 
 **Готово на стороне ML:** Contract v1 (схема + валидация), нормализация
 времени в UTC, канонический ML-контекст, общий Feature Builder `tabular-v1`
-для offline и runtime, ArtifactManifest / Artifact Bundle v1 с проверкой
+(и его проекция `runtime-safe-v1`) для offline и runtime, ArtifactManifest / Artifact Bundle v1 с проверкой
 целостности и типа модели, artifact-backed predictor, HTTP-сервис,
 validate/submission-путь, integration artifact и smoke.
 
-**Требуется от Backend** (код Backend будет добавлен в этот репозиторий
-отдельно; здесь описаны обязанности, а не его текущее состояние): приём и
+**Требуется от Backend** (код Backend находится в этом репозитории,
+`backend/`; здесь описаны обязанности по контракту, а не аудит его текущего
+состояния): приём и
 парсинг NDTP (`G6CellNav00`), `VehicleState`, история telemetry по ТС,
 schedule/domain matching, заполнение `schedule_context` по §5.1, история
 telemetry по §7, решение о пригодности точки к прогнозу, HTTP-клиент ML и
 хранение истории прогнозов (§11).
 
-**Модель НЕ заморожена:** финальная competition-модель, решение по
-train-only группе train (Group B), учёт частоты telemetry и различия
-runtime `current_deviation_seconds` vs official `cur_dev_s`, будущие схемы
-признаков. Integration artifact — не модель.
+**Модель:** research выбрал HGB H0 DIRECT на `runtime-safe-v1` (без raw
+packet counts; group B не используется); финальный обученный artifact ещё
+не создан. Открыто: совпадение присылаемого Backend'ом
+`current_deviation_seconds` с point-in-time-safe семантикой §5.1, на которой
+обучается кандидат. Integration artifact — не модель.
 
 ## 2. Граница ответственности
 
@@ -73,7 +81,7 @@ runtime `current_deviation_seconds` vs official `cur_dev_s`, будущие сх
 |---|---|
 | приём и парсинг NDTP | point-in-time валидация (`event_time <= T`) |
 | `VehicleState`, `TelemetryHistory` | канонизация запроса |
-| schedule/route matching, целевое плановое событие | model-specific признаки `tabular-v1` |
+| schedule/route matching, целевое плановое событие | model-specific признаки (`tabular-v1` / `runtime-safe-v1`) |
 | текущее отклонение от расписания, `manual_fill` | проверка и загрузка Artifact Bundle |
 | prediction eligibility, момент/частота запросов | прогноз `delay_seconds` |
 | ML HTTP client, хранение истории прогнозов | версии модели и схемы признаков |
@@ -104,6 +112,10 @@ NDTP emulator → TCP receiver → G6CellNav00 parser → VehicleState       (Ba
 ```json
 {"ready": true, "model_version": "integration-fixture-v1", "feature_schema_version": "tabular-v1"}
 ```
+
+`feature_schema_version` идентифицирует схему признаков загруженного
+artifact'а (`tabular-v1` у legacy CatBoost и `integration-fixture-v1`,
+`runtime-safe-v1` у выбранного HGB); конкретное значение не предполагайте.
 
 При отсутствующем, повреждённом, несовместимом или неверного типа artifact
 (например классификатор вместо регрессии) сервис стартует, но `/ready` →
@@ -199,7 +211,7 @@ production-модели и не меняет контракт.
 
 `speed` — это `speedAvg` (официальный mapping организаторов: исторический
 `traffic.csv speed = G6CellNav00 speedAvg`). `speedMax` — **не** скорость
-`tabular-v1`. Все пять полей обязательны; дополнительные сырые поля
+признаков модели. Все пять полей обязательны; дополнительные сырые поля
 допускаются и игнорируются моделью. (Реализация ML дополнительно терпит
 `location_valid: null`, трактуя его как невалидный GPS; Backend должен
 слать boolean.)
@@ -228,7 +240,8 @@ production-модели и не меняет контракт.
 сохраняйте порядок источника — он определяет, какой пакет «последний».
 Отдельный якорь «последняя non-null скорость» не нужен: `speed` всегда число.
 
-Зачем якоря: часть признаков `tabular-v1` берёт последнее наблюдение без
+Зачем якоря: часть признаков (`tabular-v1`, а значит и `runtime-safe-v1`)
+берёт последнее наблюдение без
 нижней границы по времени (`latest_packet_lag_s`, `latest_valid_gps_lag_s`,
 координаты последнего валидного GPS → `distance_to_target_m`, `speed_last`).
 На официальных данных последний валидный GPS старше 15 минут у ~5.5% точек.
@@ -269,7 +282,9 @@ ML не обрезает историю окном.
 - `reason` — сейчас всегда `null` (модели причины нет; фиктивные причины не
   генерируются);
 - `generated_at` — время ответа ML, UTC;
-- `model_version`, `feature_schema_version` — из manifest загруженного artifact;
+- `model_version`, `feature_schema_version` — из manifest загруженного artifact
+  (`feature_schema_version` — не константа: `tabular-v1` в примере выше,
+  `runtime-safe-v1` у выбранного HGB);
 - `target_time = schedule_context.target_time_begin + delay_seconds` —
   прогноз фактического момента целевого события (так как
   `delay = факт − план`); всегда UTC; **согласовано**. В примере:

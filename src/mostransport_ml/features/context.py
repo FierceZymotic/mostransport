@@ -26,7 +26,13 @@ import numpy as np
 import pandas as pd
 
 from mostransport_ml.features.builder import build_features
-from mostransport_ml.features.schema import FEATURE_NAMES, RUNTIME_SAFE_FEATURE_NAMES
+from mostransport_ml.features.schema import (
+    FEATURE_NAMES,
+    FEATURE_SCHEMA_VERSION,
+    RUNTIME_SAFE_FEATURE_NAMES,
+    RUNTIME_SAFE_FEATURE_SCHEMA_VERSION,
+    feature_names_for_schema,
+)
 
 
 def _naive_timestamp(value: pd.Timestamp, name: str) -> pd.Timestamp:
@@ -226,3 +232,24 @@ def project_runtime_safe_features(features: pd.DataFrame) -> pd.DataFrame:
     if tuple(columns) != FEATURE_NAMES:
         raise ValueError("tabular-v1 feature columns are not in the frozen FEATURE_NAMES order")
     return features.loc[:, list(RUNTIME_SAFE_FEATURE_NAMES)].copy()
+
+
+def features_for_schema(
+    tabular_features: pd.DataFrame, feature_schema_version: str
+) -> pd.DataFrame:
+    """Канонические признаки `tabular-v1` → признаки схемы, которую потребляет модель.
+
+    `tabular-v1` возвращается как есть (после проверки точных колонок);
+    `runtime-safe-v1` — только через `project_runtime_safe_features`.
+    Неподдерживаемая схема — `UnsupportedFeatureSchemaError`.
+    """
+    feature_names_for_schema(feature_schema_version)
+    if feature_schema_version == RUNTIME_SAFE_FEATURE_SCHEMA_VERSION:
+        return project_runtime_safe_features(tabular_features)
+    if feature_schema_version == FEATURE_SCHEMA_VERSION:
+        if not isinstance(tabular_features, pd.DataFrame):
+            raise TypeError("features must be a pandas DataFrame")
+        if tuple(tabular_features.columns) != FEATURE_NAMES:
+            raise ValueError("tabular-v1 feature columns differ from the frozen FEATURE_NAMES")
+        return tabular_features
+    raise RuntimeError(f"no transformation for supported schema {feature_schema_version!r}")
