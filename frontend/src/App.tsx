@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Bus, Clock3, Radio, Search, Wifi } from "lucide-react";
-import { vehicles } from "./mock/vehicles";
 import YandexMap from "./components/YandexMap";
 import type { RiskLevel, Vehicle } from "./types";
 
@@ -56,59 +55,71 @@ type DashboardSummaryResponse = {
 };
 
 function App() {
-  const [selected, setSelected] = useState<Vehicle | null>(vehicles[0]);
+  const [selected, setSelected] = useState<Vehicle | null>(null);
   const [query, setQuery] = useState("");
-  const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>(vehicles);
-  const [dashboardVehicles, setDashboardVehicles] = useState<Vehicle[]>(vehicles);
+  const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>([]);
+  const [dashboardVehicles, setDashboardVehicles] = useState<Vehicle[]>([]);
   const [liveConnected, setLiveConnected] = useState(false);
   const [dashboardConnected, setDashboardConnected] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
+    let retryTimer: number | undefined;
 
-    fetch("http://localhost:3000/prediction/dashboard/summary")
-      .then(async (response) => {
-        if (!response.ok) {
-          throw new Error(`HTTP ${response.status}`);
-        }
-
-        const payload = (await response.json()) as DashboardSummaryResponse;
-
-        if (cancelled) {
-          return;
-        }
-
-        if (Array.isArray(payload.vehicles)) {
-          const normalized = payload.vehicles.map((vehicle) => ({
-            ...vehicle,
-            speed: Number(vehicle.speed ?? 0),
-            lat: Number(vehicle.lat ?? 0),
-            lon: Number(vehicle.lon ?? 0),
-            delayMinutes: Number(vehicle.delayMinutes ?? 0),
-          }));
-
-          setDashboardVehicles(normalized);
-          setDashboardConnected(true);
-
-          if (!selected) {
-            setSelected(normalized[0] ?? vehicles[0]);
+    const loadDashboard = () => {
+      fetch("http://localhost:3000/prediction/dashboard/summary")
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
           }
-        }
-      })
-      .catch(() => {
-        if (!cancelled) {
+
+          const payload = (await response.json()) as DashboardSummaryResponse;
+
+          if (cancelled) {
+            return;
+          }
+
+          if (Array.isArray(payload.vehicles)) {
+            const normalized = payload.vehicles.map((vehicle) => ({
+              ...vehicle,
+              speed: Number(vehicle.speed ?? 0),
+              lat: Number(vehicle.lat ?? 0),
+              lon: Number(vehicle.lon ?? 0),
+              delayMinutes: Number(vehicle.delayMinutes ?? 0),
+            }));
+
+            setDashboardVehicles(normalized);
+            setDashboardConnected(true);
+
+            if (!selected) {
+              setSelected(normalized[0] ?? null);
+            }
+          }
+        })
+        .catch(() => {
+          if (cancelled) {
+            return;
+          }
+
           setDashboardConnected(false);
-        }
-      });
+          retryTimer = window.setTimeout(loadDashboard, 4000);
+        });
+    };
+
+    loadDashboard();
 
     return () => {
       cancelled = true;
+      if (retryTimer) {
+        window.clearTimeout(retryTimer);
+      }
     };
-  }, []);
+  }, [selected]);
 
   useEffect(() => {
-    const baseList = liveConnected ? liveVehicles : dashboardConnected ? dashboardVehicles : vehicles;
+    const baseList = liveConnected ? liveVehicles : dashboardConnected ? dashboardVehicles : [];
     if (!baseList.length) {
+      setSelected(null);
       return;
     }
 
@@ -118,61 +129,79 @@ function App() {
   }, [liveConnected, dashboardConnected, liveVehicles, dashboardVehicles]);
 
   useEffect(() => {
-    const socket = new WebSocket("ws://localhost:3000/live");
+    let socket: WebSocket | null = null;
+    let reconnectTimer: number | undefined;
 
-    socket.onopen = () => {
-      setLiveConnected(true);
-    };
+    const connectSocket = () => {
+      socket = new WebSocket("ws://localhost:3000/live");
 
-    socket.onclose = () => {
-      setLiveConnected(false);
-    };
+      socket.onopen = () => {
+        setLiveConnected(true);
+      };
 
-    socket.onmessage = (event) => {
-      try {
-        const message = JSON.parse(event.data) as {
-          event?: string;
-          payload?: {
-            unitId?: number;
-            latitude?: number;
-            longitude?: number;
-            speed?: number;
+      socket.onerror = () => {
+        setLiveConnected(false);
+      };
+
+      socket.onclose = () => {
+        setLiveConnected(false);
+        if (reconnectTimer) {
+          window.clearTimeout(reconnectTimer);
+        }
+        reconnectTimer = window.setTimeout(connectSocket, 2500);
+      };
+
+      socket.onmessage = (event) => {
+        try {
+          const message = JSON.parse(event.data) as {
+            event?: string;
+            payload?: {
+              unitId?: number;
+              latitude?: number;
+              longitude?: number;
+              speed?: number;
+            };
           };
-        };
 
-        if (message.event !== "telemetry" || !message.payload) {
-          return;
-        }
-
-        const nextVehicle = mapTelemetryToVehicle({
-          unitId: Number(message.payload.unitId ?? 0),
-          latitude: Number(message.payload.latitude ?? 0),
-          longitude: Number(message.payload.longitude ?? 0),
-          speed: Number(message.payload.speed ?? 0),
-        });
-
-        if (!Number.isFinite(nextVehicle.lat) || !Number.isFinite(nextVehicle.lon)) {
-          return;
-        }
-
-        setLiveVehicles((current) => {
-          const existingIndex = current.findIndex((vehicle) => vehicle.id === nextVehicle.id);
-
-          if (existingIndex === -1) {
-            return [nextVehicle, ...current].slice(0, 20);
+          if (message.event !== "telemetry" || !message.payload) {
+            return;
           }
 
-          const updated = [...current];
-          updated[existingIndex] = { ...updated[existingIndex], ...nextVehicle };
-          return updated;
-        });
-      } catch {
-        // Ignore malformed websocket payloads while the backend stream is warming up.
-      }
+          const nextVehicle = mapTelemetryToVehicle({
+            unitId: Number(message.payload.unitId ?? 0),
+            latitude: Number(message.payload.latitude ?? 0),
+            longitude: Number(message.payload.longitude ?? 0),
+            speed: Number(message.payload.speed ?? 0),
+          });
+
+          if (!Number.isFinite(nextVehicle.lat) || !Number.isFinite(nextVehicle.lon)) {
+            return;
+          }
+
+          setLiveVehicles((current) => {
+            const existingIndex = current.findIndex((vehicle) => vehicle.id === nextVehicle.id);
+
+            if (existingIndex === -1) {
+              return [nextVehicle, ...current].slice(0, 20);
+            }
+
+            const updated = [...current];
+            updated[existingIndex] = { ...updated[existingIndex], ...nextVehicle };
+            return updated;
+          });
+        } catch {
+          // Ignore malformed websocket payloads while the backend stream is warming up.
+        }
+      };
     };
 
+    connectSocket();
+
     return () => {
-      socket.close();
+      if (reconnectTimer) {
+        window.clearTimeout(reconnectTimer);
+      }
+      socket?.close();
     };
   }, []);
 
@@ -180,9 +209,9 @@ function App() {
     ? liveVehicles
     : dashboardConnected
       ? dashboardVehicles
-      : vehicles;
+      : [];
 
-  const sourceLabel = liveConnected ? "ЯНДЕКС КАРТЫ · LIVE DATA" : dashboardConnected ? "ЯНДЕКС КАРТЫ · DASHBOARD DATA" : "ЯНДЕКС КАРТЫ · MOCK DATA";
+  const sourceLabel = liveConnected ? "ЯНДЕКС КАРТЫ · LIVE DATA" : dashboardConnected ? "ЯНДЕКС КАРТЫ · DASHBOARD DATA" : "ЯНДЕКС КАРТЫ · WAITING FOR DATA";
 
   const filtered = useMemo(
     () =>
@@ -212,17 +241,21 @@ function App() {
         <Stat icon={<Bus />} title="ТС в потоке" value={visibleVehicles.length} />
         <Stat icon={<AlertTriangle />} title="Высокий риск" value={highRisk} danger />
         <Stat icon={<Clock3 />} title="Горизонт прогноза" value="10–15 мин" />
-        <Stat icon={<Wifi />} title="Backend" value={liveConnected ? "Live" : dashboardConnected ? "Dashboard" : "Mock"} />
+        <Stat icon={<Wifi />} title="Backend" value={liveConnected ? "Live" : dashboardConnected ? "Dashboard" : "Waiting"} />
       </section>
 
       <section className="workspace">
         <div className="map">
           <div className="map-label">{sourceLabel}</div>
-          <YandexMap
-            vehicles={visibleVehicles}
-            selected={selected}
-            onSelect={setSelected}
-          />
+          {visibleVehicles.length ? (
+            <YandexMap
+              vehicles={visibleVehicles}
+              selected={selected}
+              onSelect={setSelected}
+            />
+          ) : (
+            <div className="empty-state">Ожидание live-данных от backend…</div>
+          )}
         </div>
 
         <aside className="sidebar">
