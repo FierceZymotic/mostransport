@@ -68,6 +68,33 @@ export class TelemetryRepository {
     return row?.timestamp ?? null;
   }
 
+  /**
+   * Latest strict-valid GPS fix (location_valid and finite coordinates) at or before T: the same
+   * anchor selectContractHistory always keeps, read without loading the whole history.
+   */
+  async findLatestValidPosition(
+    unitId: number,
+    predictionTime: Date,
+  ): Promise<{ latitude: number; longitude: number } | null> {
+    const pageSize = 50;
+    for (let skip = 0; ; skip += pageSize) {
+      const rows = await this.prisma.telemetry.findMany({
+        where: {
+          unit_id: String(unitId),
+          timestamp: { lte: predictionTime },
+          location_valid: true,
+        },
+        orderBy: [{ timestamp: 'desc' }, { id: 'desc' }],
+        skip,
+        take: pageSize,
+        select: { latitude: true, longitude: true },
+      });
+      const fix = rows.find((row) => Number.isFinite(row.latitude) && Number.isFinite(row.longitude));
+      if (fix) return fix;
+      if (rows.length < pageSize) return null;
+    }
+  }
+
   async findHistory(
     unitId: number,
     predictionTime: Date,

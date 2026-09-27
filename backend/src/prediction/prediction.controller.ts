@@ -14,6 +14,18 @@ export class PredictionController {
   private readonly prisma: PrismaService,
 ) {}
 
+  /**
+   * Real trip id of a unit at its last packet time T via the canonical live resolution (the same
+   * one live prediction uses), independent of ML and prediction history; null when the trip
+   * cannot be determined. Never a placeholder.
+   */
+  private resolveRoute(unitId: string, lastPacketTime: Date): Promise<string | null> {
+    return this.safeRead(
+      async () => (await this.predictionService.resolveTrip(Number(unitId), lastPacketTime)).match?.trId ?? null,
+      null,
+    );
+  }
+
   private async safeRead<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
     try {
       return await operation();
@@ -85,9 +97,9 @@ async dashboardSummary() {
     [],
   );
 
-  const vehicles = activeVehicles.map((row) => ({
+  const vehicles = await Promise.all(activeVehicles.map(async (row) => ({
     id: String(row.unit_id),
-    route: row.tr_id ?? 'LIVE',
+    route: await this.resolveRoute(row.unit_id, row.timestamp),
     lat: row.latitude ?? 0,
     lon: row.longitude ?? 0,
     speed: row.speed ?? 0,
@@ -100,7 +112,7 @@ async dashboardSummary() {
         : 'Отклонений не обнаружено',
     segment: row.location_valid ? 'Realtime telemetry' : 'Awaiting GPS',
     updatedAt: row.timestamp.toISOString(),
-  }));
+  })));
 
   const currentRisk = vehicles.filter((vehicle) => vehicle.risk === 'high').length;
 
@@ -123,15 +135,15 @@ async dashboardVehicles() {
     [],
   );
 
-  return rows.map((row) => ({
+  return Promise.all(rows.map(async (row) => ({
     id: String(row.unit_id),
-    route: row.tr_id ?? 'LIVE',
+    route: await this.resolveRoute(row.unit_id, row.timestamp),
     lat: row.latitude ?? 0,
     lon: row.longitude ?? 0,
     speed: row.speed ?? 0,
     locationValid: row.location_valid ?? false,
     updatedAt: row.timestamp.toISOString(),
-  }));
+  })));
 }
 
 @Get('dashboard/alerts')

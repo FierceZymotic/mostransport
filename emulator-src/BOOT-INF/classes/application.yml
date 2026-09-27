@@ -1,0 +1,11 @@
+server:
+  port: 18080
+
+spring:
+  application:
+    name: ndtp-telemetry-emulator
+
+logging:
+  level:
+    root: INFO
+    ru.advantum.csptm.ndtp.emulator: INFO

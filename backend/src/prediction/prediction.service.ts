@@ -12,7 +12,8 @@ import {
   DEGRADED_CURRENT_DEVIATION_REASON,
   ScheduleRepository,
 } from './schedule.repository.js';
-import { TripMatcherService } from './trip-matcher.service.js';
+import { TripMatch, TripMatcherService } from './trip-matcher.service.js';
+import { VehicleState } from '../telemetry/vehicle-state.js';
 
 export class InvalidPredictionTimeError extends BadRequestException {}
 
@@ -42,6 +43,11 @@ export function requirePredictionTime(input: Date): Date {
   return value;
 }
 
+/** Outcome of the canonical live trip resolution (see PredictionService.resolveTrip). */
+export type TripResolution =
+  | { status: 'resolved'; match: TripMatch }
+  | { status: 'NO_VALID_GPS' | 'NO_TRIP_MATCH'; match: null };
+
 /** ML response plus Backend-side input provenance that Contract v1 cannot carry. */
 export interface PredictionOutcome {
   response: PredictionResponse;
@@ -66,6 +72,35 @@ export class PredictionService {
       unitId,
       demoClock.now(),
     );
+  }
+
+  /**
+   * Canonical live trip identity of a unit at model time T, shared by live prediction and the
+   * dashboard: the latest strict-valid GPS at or before T, matched by TripMatcherService (mapped
+   * vehicles.current_tr_id first; only trips with an action in (T+10m, T+15m]; no synthetic
+   * 9000xxx trips). Independent of ML and of prediction history. `history` (the Contract history
+   * at T, which always keeps that GPS anchor) avoids a second query when the caller has it.
+   */
+  async resolveTrip(
+    unitId: number,
+    predictionTime: Date,
+    history?: VehicleState[],
+  ): Promise<TripResolution> {
+    const position = history
+      ? [...history].reverse().find(
+          (state) => state.locationValid && Number.isFinite(state.latitude) && Number.isFinite(state.longitude),
+        ) ?? null
+      : await this.telemetryRepository.findLatestValidPosition(unitId, predictionTime);
+    if (!position) {
+      return { status: 'NO_VALID_GPS', match: null };
+    }
+    const match = await this.tripMatcher.findTrip(
+      position.latitude,
+      position.longitude,
+      String(unitId),
+      predictionTime,
+    );
+    return match ? { status: 'resolved', match } : { status: 'NO_TRIP_MATCH', match: null };
   }
 
   async predictForVehicleAt(
@@ -94,24 +129,18 @@ export class PredictionService {
       );
     }
 
-    // Match on the latest strict-valid GPS at or before T (history is <= T); an invalid fix
-    // carries no trustworthy location.
-    const latestValid = [...vehicleHistory].reverse().find(
-      (state) => state.locationValid && Number.isFinite(state.latitude) && Number.isFinite(state.longitude),
-    );
-    if (!latestValid) {
-      throw new PredictionIneligibleError('NO_VALID_GPS', `No strict-valid GPS <= T for unit ${unitId}`);
+    // Same canonical trip identity the dashboard shows (latest strict-valid GPS <= T; an
+    // invalid fix carries no trustworthy location).
+    const trip = await this.resolveTrip(unitId, normalizedPredictionTime, vehicleHistory);
+    if (trip.status !== 'resolved') {
+      throw new PredictionIneligibleError(
+        trip.status,
+        trip.status === 'NO_VALID_GPS'
+          ? `No strict-valid GPS <= T for unit ${unitId}`
+          : `Could not determine trip for unit ${unitId}`,
+      );
     }
-
-    const match = await this.tripMatcher.findTrip(
-      latestValid.latitude,
-      latestValid.longitude,
-      String(unitId),
-      normalizedPredictionTime,
-    );
-    if (!match) {
-      throw new PredictionIneligibleError('NO_TRIP_MATCH', `Could not determine trip for unit ${unitId}`);
-    }
+    const match = trip.match;
 
     const selection =
       await this.scheduleRepository.findTargetAction(
