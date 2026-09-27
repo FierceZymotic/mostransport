@@ -56,12 +56,29 @@ uv run python scripts/smoke_offline.py
 uv run python scripts/inspect_csv.py --help
 ```
 
+Финальный artifact из официальных данных (P3; OOF gate → финальный H0 →
+bundle → load-back parity; если gate не пройден — exit code 3 и artifact не
+создаётся) и validate submission. Выходы — в `artifacts/` и `submission*.csv`
+(в `.gitignore`):
+
+```bash
+export MOSTRANSPORT_DATASET=/path/to/official/dataset
+uv run python scripts/train_final_hgb.py \
+  --artifact-dir artifacts/hgb-h0-runtime-safe-v1-group-a-v1 \
+  --report artifacts/reports/p3-hgb-h0-group-a-v1.json   # --replace для пересборки
+uv run python scripts/make_submission.py \
+  --artifact-dir artifacts/hgb-h0-runtime-safe-v1-group-a-v1 \
+  --output submission-hgb-h0-runtime-safe-v1.csv
+```
+
 Запуск сервера с реальной моделью из Artifact Bundle v1 (production-путь):
 
 ```bash
-MOSTRANSPORT_ARTIFACT_DIR=<bundle> \
+MOSTRANSPORT_ARTIFACT_DIR=artifacts/hgb-h0-runtime-safe-v1-group-a-v1 \
   uv run uvicorn mostransport_ml.serving.artifact_app:create_app_from_env --factory \
   --host 127.0.0.1 --port 8000
+uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000 \
+  --expected-feature-schema-version runtime-safe-v1
 ```
 
 Или mock для интеграции (явно, delay = 0):
@@ -113,7 +130,10 @@ uv run pytest -k "speed" -q                          # по подстроке �
 
 Тесты детерминированы, не используют внешнюю сеть и реальные
 организаторские данные — только синтетические payload'ы (live smoke-тест
-поднимает локальный uvicorn на `127.0.0.1`).
+поднимает локальный uvicorn на `127.0.0.1`). Training path P3 тестируется на
+синтетическом наборе официальной структуры (`tests/test_final_training.py`);
+research gate на официальных данных проверяет только явный запуск
+`scripts/train_final_hgb.py`.
 
 Интеграционный запуск сервиса с integration-only artifact
 (**INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**), `curl` и smoke

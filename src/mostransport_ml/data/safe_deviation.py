@@ -30,17 +30,26 @@ Evidence v1: они раскрывают hidden target validate).
 обязан быть уникальным и возрастающим (например, `RangeIndex` от
 `pd.read_csv(path, usecols=SCHEDULE_FACT_COLUMNS)` после любой фильтрации
 строк). Переупорядоченный кадр отклоняется, а не молча используется.
+
+`load_train_schedule_facts` — единственный loader фактов: training-only, жёстко
+только `train/schedule.csv` (без параметра split, поэтому факты test/validate им
+не прочитать), только `SCHEDULE_FACT_COLUMNS`, порядок CSV сохранён. Общие
+official loaders (`data/official.py`) по-прежнему фактов не читают.
 """
 
 from __future__ import annotations
 
+import hashlib
 import math
 import re
 from collections.abc import Sequence
+from pathlib import Path
 from typing import Any
 
 import numpy as np
 import pandas as pd
+
+from mostransport_ml.data.official import OfficialDataSchemaError
 
 POINT_KEY_COLUMNS: tuple[str, ...] = ("sample_id", "tr_id", "T")
 SCHEDULE_FACT_COLUMNS: tuple[str, ...] = (
@@ -50,6 +59,12 @@ SCHEDULE_FACT_COLUMNS: tuple[str, ...] = (
     "time_fact_begin",
 )
 SAFE_DEVIATION_NAME = "safe_current_deviation_seconds"
+TRAIN_SCHEDULE_FILE = "train/schedule.csv"
+# Стабильный идентификатор семантики (для provenance artifact'а).
+SAFE_DEVIATION_SEMANTICS = (
+    "p1-safe-deviation-v1: latest confirmed fact <= T of same tr_id; "
+    "tie: max numeric tt_action_item_id, then last CSV row; none: 0.0; no clamp"
+)
 
 _NS_PER_S = 1_000_000_000
 _MAX_EXACT_FLOAT_INT = 2**53
@@ -201,3 +216,57 @@ def safe_current_deviation_seconds(points: pd.DataFrame, schedule_facts: pd.Data
         name=SAFE_DEVIATION_NAME,
         dtype=float,
     )
+
+
+def load_train_schedule_facts(root: str | Path) -> pd.DataFrame:
+    """Factual schedule TRAIN (training-only) для `safe_current_deviation_seconds`.
+
+    Читается только `<root>/train/schedule.csv`, только `SCHEDULE_FACT_COLUMNS`
+    (`usecols`), без сортировки: индекс — `RangeIndex` в исходном порядке строк
+    CSV. Времена разбираются тем же правилом, что и в helper'е (ISO-8601,
+    naive, `datetime64[ns]`; `time_begin` обязателен, `time_fact_begin` может
+    отсутствовать). Нельзя передавать в Feature Builder и runtime-контекст.
+    """
+    path = Path(root) / TRAIN_SCHEDULE_FILE
+    if not path.is_file():
+        raise FileNotFoundError(f"Official dataset file not found: {TRAIN_SCHEDULE_FILE}")
+    available = pd.read_csv(path, nrows=0).columns.tolist()
+    missing = [c for c in SCHEDULE_FACT_COLUMNS if c not in available]
+    if missing:
+        raise OfficialDataSchemaError(Path(TRAIN_SCHEDULE_FILE), missing, available)
+    facts = pd.read_csv(path, usecols=list(SCHEDULE_FACT_COLUMNS))[list(SCHEDULE_FACT_COLUMNS)]
+    facts.index = pd.RangeIndex(len(facts))
+    facts["time_begin"] = _naive_ns(
+        facts["time_begin"], "train schedule time_begin", allow_missing=False
+    )
+    facts["time_fact_begin"] = _naive_ns(
+        facts["time_fact_begin"], "train schedule time_fact_begin", allow_missing=True
+    )
+    return facts
+
+
+def schedule_facts_fingerprint(schedule_facts: pd.DataFrame) -> str:
+    """SHA-256 фактового представления, которое потребляет safe deviation.
+
+    Хешируются только `SCHEDULE_FACT_COLUMNS` в порядке строк кадра (порядок CSV
+    от `load_train_schedule_facts`); остальные колонки не влияют. ID — как
+    строки, времена — naive `datetime64[ns]` в целых наносекундах (пропуск —
+    пустое поле), поэтому строковое и разобранное представления одного
+    содержимого дают один отпечаток.
+    """
+    _require_columns(schedule_facts, SCHEDULE_FACT_COLUMNS, "schedule_facts")
+    columns = {
+        "tr_id": [str(v) for v in schedule_facts["tr_id"].tolist()],
+        "tt_action_item_id": [str(v) for v in schedule_facts["tt_action_item_id"].tolist()],
+    }
+    for name in ("time_begin", "time_fact_begin"):
+        values = _naive_ns(schedule_facts[name], f"schedule_facts.{name}", allow_missing=True)
+        missing = np.isnat(values)
+        columns[name] = [
+            "" if gap else str(ns)
+            for gap, ns in zip(missing, values.view("int64").tolist(), strict=True)
+        ]
+    digest = hashlib.sha256((",".join(SCHEDULE_FACT_COLUMNS) + "\n").encode("utf-8"))
+    for row in zip(*(columns[c] for c in SCHEDULE_FACT_COLUMNS), strict=True):
+        digest.update((",".join(row) + "\n").encode("utf-8"))
+    return digest.hexdigest()

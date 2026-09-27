@@ -10,11 +10,17 @@
 > запроса/ответа, и семантика полей (включая §5.1 и `prediction.target_time`,
 > §8). Изменение формы — только новой версией контракта.
 
-## 0. Быстрый старт (без финальной модели)
+## 0. Быстрый старт
 
-Research выбрал production-кандидата (HGB H0, DIRECT, схема признаков
-`runtime-safe-v1`), но финальный artifact, обученный на официальных данных,
-ещё не создан. Для интеграции есть детерминированный
+**Финальная модель** — `hgb-h0-runtime-safe-v1-group-a-v1` (HGB H0, DIRECT,
+схема признаков `runtime-safe-v1`). Её Artifact Bundle v1 воспроизводимо
+строится из официальных данных одной командой ML
+(`scripts/train_final_hgb.py`, см. [HACKATHON_RUNBOOK.md](HACKATHON_RUNBOOK.md))
+и не коммитится: организаторские данные и производные artifacts живут
+локально. Backend'у нужен только путь к этому каталогу
+(`MOSTRANSPORT_ARTIFACT_DIR`); форма Contract v1 не меняется.
+
+Без официального датасета для интеграции есть детерминированный
 **integration-only artifact** (**INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**): крошечная синтетическая модель.
 
 > **INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL.**
@@ -45,13 +51,13 @@ uv run python scripts/smoke_contract_v1.py --base-url http://127.0.0.1:8000
 Схема работающего сервиса: `http://127.0.0.1:8000/docs` (Swagger UI) и
 `http://127.0.0.1:8000/openapi.json`. Датасет организаторов для этого не нужен.
 
-**Замена на настоящую модель:** когда будет готов финальный artifact
-(Artifact Bundle v1; у выбранного HGB — схема признаков `runtime-safe-v1`),
-меняется только `MOSTRANSPORT_ARTIFACT_DIR`. Схемы запроса/ответа и код Backend
-не меняются; в `/ready` и ответе изменятся значения `model_version` и
-`feature_schema_version`. Integration artifact той же схемы, что у выбранного
-HGB: `scripts/build_integration_artifact.py --model-family hist_gradient_boosting`
-(`integration-fixture-hgb-v1`, тоже INTEGRATION TEST ONLY).
+**Замена на финальную модель:** меняется только `MOSTRANSPORT_ARTIFACT_DIR`
+(например `artifacts/hgb-h0-runtime-safe-v1-group-a-v1`). Схемы запроса/ответа
+и код Backend не меняются; в `/ready` и ответе будут `model_version =
+hgb-h0-runtime-safe-v1-group-a-v1` и `feature_schema_version = runtime-safe-v1`
+(smoke: `--expected-feature-schema-version runtime-safe-v1`). Integration
+artifact той же схемы: `scripts/build_integration_artifact.py --model-family
+hist_gradient_boosting` (`integration-fixture-hgb-v1`, тоже INTEGRATION TEST ONLY).
 
 ## 1. Состояние системы
 
@@ -59,7 +65,8 @@ HGB: `scripts/build_integration_artifact.py --model-family hist_gradient_boostin
 времени в UTC, канонический ML-контекст, общий Feature Builder `tabular-v1`
 (и его проекция `runtime-safe-v1`) для offline и runtime, ArtifactManifest / Artifact Bundle v1 с проверкой
 целостности и типа модели, artifact-backed predictor, HTTP-сервис,
-validate/submission-путь, integration artifact и smoke.
+validate/submission-путь, integration artifact и smoke, воспроизводимое
+обучение финального HGB artifact'а (P3).
 
 **Требуется от Backend** (код Backend находится в этом репозитории,
 `backend/`; здесь описаны обязанности по контракту, а не аудит его текущего
@@ -69,11 +76,12 @@ schedule/domain matching, заполнение `schedule_context` по §5.1, и
 telemetry по §7, решение о пригодности точки к прогнозу, HTTP-клиент ML и
 хранение истории прогнозов (§11).
 
-**Модель:** research выбрал HGB H0 DIRECT на `runtime-safe-v1` (без raw
-packet counts; group B не используется); финальный обученный artifact ещё
-не создан. Открыто: совпадение присылаемого Backend'ом
-`current_deviation_seconds` с point-in-time-safe семантикой §5.1, на которой
-обучается кандидат. Integration artifact — не модель.
+**Модель:** HGB H0 DIRECT на `runtime-safe-v1` (без raw packet counts; group
+B не используется), обучена на point-in-time-safe отклонении §5.1; финальный
+artifact строится воспроизводимо (P3). **Интеграционное требование:**
+присылаемый Backend'ом `current_deviation_seconds` должен иметь ту же
+point-in-time семантику §5.1 — это проверяется на стороне Backend, ML не может
+его восстановить. Integration artifact — не модель.
 
 ## 2. Граница ответственности
 
@@ -189,9 +197,11 @@ min/max `tt_action_item_id` его не воспроизводят). Backend р�
 **последнего подтверждённо пройденного** события, о прохождении которого
 Backend реально знает к моменту `T`; если такого ещё нет — `0`. Только
 point-in-time-safe информация: ничего, что стало известно после `T`.
-Это runtime-значение **не гарантируется** как точный аналог поля `cur_dev_s`
-официального датасета; различие учитывается на стороне модели до финальной
-production-модели и не меняет контракт.
+Это runtime-значение **не** является аналогом поля `cur_dev_s`
+официального датасета. Финальная модель обучена именно на point-in-time-safe
+семантике (последний подтверждённый факт `<= T`, иначе `0`), поэтому
+соответствие этому правилу — интеграционное требование к Backend; контракт
+оно не меняет.
 
 **`manual_fill`** Backend не вычисляет: передаёт значение из выбранной
 строки расписания как есть (`true` — только если в строке уже `true`).
@@ -324,23 +334,22 @@ context-only). Для них прогноз не нужен: **eligibility ре�
 Backend их не вычисляет. Смена модели видна по `model_version`; смена схемы
 признаков — по `feature_schema_version`.
 
-## 12. Известный modeling-caveat
+## 12. Частота telemetry и current deviation
 
-> **Не прореживайте telemetry эмулятора на стороне Backend**, если команда
-> явно не решит это после modeling-исследования. Сохраняйте историю по §7.
+> **Не прореживайте telemetry эмулятора на стороне Backend.** Сохраняйте
+> историю по §7.
 
-Исторический CSV имеет шаг ~12–15 с между пакетами; Backend наблюдает у
-эмулятора ~1 Гц. Организаторы пояснили: датасет получен их внутренним
-процессингом из telemetry того же типа, что даёт эмулятор; перейти от данных
-эмулятора к представлению, похожему на датасет, возможно, но точное
+Исторический CSV имеет шаг ~12–15 с между пакетами; частота runtime-потока
+не гарантирована и может отличаться. Организаторы пояснили: датасет получен их
+внутренним процессингом из telemetry того же типа, что даёт эмулятор; точное
 преобразование не раскрыто.
 
 Offline и runtime используют один канонический Feature Builder: при
 эквивалентном каноническом входе признаки строятся одним детерминированным
-путём. Полной parity источников при этом нет: частота пакетов влияет на
-счётчики вроде `rows_*`, `valid_gps_count_*`, а runtime
-`current_deviation_seconds` не идентичен official `cur_dev_s` (§5.1). Это
-открытые вопросы модели, не контракта: их решение не изменит схему запроса.
+путём. Зависимость от частоты пакетов закрыта на стороне ML: финальная
+схема `runtime-safe-v1` не использует счётчики `rows_*`/`valid_gps_count_*`.
+Остаётся интеграционное требование: `current_deviation_seconds` по §5.1.
+Схема запроса от этого не меняется.
 
 ## 13. Docker (опционально)
 
@@ -351,6 +360,7 @@ Offline и runtime используют один канонический Featur
 docker build -t mostransport-ml .
 docker run --rm -p 8000:8000 \
   -v /tmp/mostransport-integration-artifact:/artifact:ro mostransport-ml
+# финальная модель: смонтировать artifacts/hgb-h0-runtime-safe-v1-group-a-v1
 ```
 
 Сборка образа не проверялась в ML-окружении (Docker там недоступен); шаги

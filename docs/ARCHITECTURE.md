@@ -38,13 +38,36 @@ Dataset Evidence v1 — тег `dataset-evidence-v1` (92-ячеечная вер
   число (wire-инвариант Contract v1).
 - Датасет получен внутренним процессингом организаторов из telemetry типа
   эмулятора; точное преобразование не раскрыто (ответ организаторов).
-- `labels_test` — официальный local model-selection split; `validate` —
-  скрытый leaderboard (target недоступен).
+- `labels_test` — официальный local evaluation split организаторов
+  (ИСТОРИЧЕСКИ — оценка M1; текущее production-решение его не использует,
+  см. §10); `validate` — скрытый leaderboard (target недоступен).
 - Факт `test/schedule.csv` структурно раскрывает hidden target validate —
   его использование для validate запрещено.
 - Организаторские датасеты нельзя коммитить или публиковать.
 
 ## 3. End-to-end архитектура (реализовано)
+
+Текущий production-путь модели (P3): обучение и runtime сходятся в один и тот
+же builder, одну проекцию и один artifact.
+
+```
+TRAINING (scripts/train_final_hgb.py → training/final_hgb.py)
+official train: labels_train + train/traffic + train/schedule (план)
+  │ Group A = train points ∩ planned-only real tr_id universe (test/schedule.csv, план)
+  │ load_train_schedule_facts (train/schedule.csv, только факт-колонки)
+  │   → safe_current_deviation_seconds (факт <= T)
+  ▼
+offline_context(..., current_deviation_seconds=safe) → CanonicalBatch
+  → build_features_from_context (tabular-v1, 37) → project_runtime_safe_features (29)
+  → GroupKFold(5, tr_id) OOF HGB H0 → gate (research reference, допуск 1e-9)
+  → fit H0 на всей Group A → Artifact Bundle v1 (model.skops)
+                                   │  hgb-h0-runtime-safe-v1-group-a-v1
+RUNTIME                            ▼
+Contract v1 → runtime_context → CanonicalBatch → тот же builder → та же проекция
+  → ArtifactPredictor (тот же bundle) → delay_seconds
+```
+
+Общая схема обоих путей (включая legacy CatBoost/`tabular-v1`):
 
 ```
 OFFLINE / RESEARCH                          RUNTIME
@@ -88,7 +111,9 @@ serving    (→ inference, features)
 ```
 
 `models/` (M1 CatBoost config, HGB H0 config, train regimes) зависит только от
-`target/` и `features/schema.py`.
+`target/` и `features/schema.py`. `training/` (финальный P3 path) зависит от
+`data`, `features`, `models`, `evaluation`, `artifacts`, `inference`; от него
+не зависит ничего.
 
 Текущее намеренное production-сопоставление: `tabular-v1` — legacy CatBoost
 (M1, integration fixture); `runtime-safe-v1` — production-кандидат HGB H0
@@ -144,7 +169,12 @@ ML всё равно отбрасывает такие пакеты (defense-in-
 - `models/hgb_v1.py` — фиксированная H0-конфигурация HGB и строгая
   training-граница `fit_h0` (ровно `runtime-safe-v1`, NaN допустимы, ±inf нет).
 - `data/safe_deviation.py` — offline point-in-time-safe текущее отклонение
-  (факт `<= T`) для `offline_context(..., current_deviation_seconds=...)`.
+  (факт `<= T`) для `offline_context(..., current_deviation_seconds=...)` и
+  единственный loader фактов `load_train_schedule_facts` (только
+  `train/schedule.csv`).
+- `training/final_hgb.py` + `scripts/train_final_hgb.py` — финальный training
+  path P3 (§3, §8): OOF gate, финальный H0, manifest с честным provenance,
+  export и load-back parity.
 
 ## 7. Признаки, artifact, inference, serving
 
@@ -181,11 +211,15 @@ ML всё равно отбрасывает такие пакеты (defense-in-
 
 1. Официальный датасет лежит вне репозитория (`MOSTRANSPORT_DATASET`).
 2. `load_official_split` / `load_validate_inputs` читают только разрешённые
-   колонки и файлы.
-3. `offline_context` → `CanonicalBatch` → `build_features_from_context`.
-4. Обучение кандидата (research) → `ArtifactManifest` → `export_bundle`.
-5. Оценка на `labels_test` через `ArtifactPredictor`; submission —
-   `scripts/make_submission.py`.
+   колонки и файлы (без фактов расписания); факты train читает только
+   training-loader `load_train_schedule_facts`.
+3. `scripts/train_final_hgb.py`: группа A → safe deviation → `offline_context`
+   → builder → `runtime-safe-v1` → GroupKFold OOF gate → финальный H0 →
+   `export_bundle` → load-back parity (§3). Artifact и отчёт — в `artifacts/`
+   (в `.gitignore`).
+4. Submission — `scripts/make_submission.py` на финальном artifact'е
+   (`cur_dev_s` validate берётся из `validate/points.csv`).
+5. ИСТОРИЧЕСКИ (M1): обучение CatBoost на `tabular-v1` и оценка на `labels_test`.
 
 ## 9. Каноническое представление
 
@@ -196,13 +230,16 @@ Production-путь не использует `data/canonical.py`: официа�
 
 ## 10. Стратегия target/evaluation
 
-Target берётся из официальной разметки (`labels_*`), не строится заново;
-DIRECT и RESIDUAL — только преобразования обучающей цели и обратно.
-Model selection — на `labels_test`; validate — только для submission.
+Target берётся из официальной разметки (`labels_train`), не строится заново;
+DIRECT и RESIDUAL — только преобразования обучающей цели и обратно. Текущее
+правило: семейство, H0 и признаки заморожены; production-приёмка — точное
+воспроизведение GroupKFold(5) OOF MAE на группе A. `labels_test` и validate для
+нового выбора модели не используются; validate — только для submission.
+ИСТОРИЧЕСКИ model selection M1 выполнялся на `labels_test`.
 
 ## 11. MAE baseline
 
-Воспроизведённые на `labels_test` baselines (Dataset Evidence v1 / M1):
+ИСТОРИЧЕСКИ воспроизведённые на `labels_test` baselines (Dataset Evidence v1 / M1):
 zero ≈ 103.34 с, train median ≈ 100.87 с, `cur_dev_s` ≈ 93.36 с.
 
 ## 12. Согласованность training/serving
@@ -213,15 +250,16 @@ Offline и runtime используют один канонический Featur
 побитово одинаковые признаки и прогноз из одного bundle). Это code-path
 parity, а не полная parity источников:
 
-- runtime `current_deviation_seconds` (point-in-time-safe) не идентичен
-  official `cur_dev_s` датасета;
-- CSV имеет шаг telemetry ~12–15 с, эмулятор может присылать ~1 Гц —
-  count-признаки (`rows_*`, `valid_gps_count_*`) могут быть смещены.
+- official `cur_dev_s` датасета не является point-in-time-safe отклонением;
+- исторический CSV имеет шаг telemetry ~12–15 с, а частота runtime-потока не
+  гарантирована и может отличаться.
 
-Для production-кандидата (`runtime-safe-v1`) count-признаки исключены, а
-offline-отклонение считается point-in-time-safe (`data/safe_deviation.py`);
-`tabular-v1` не меняется и молча не нормализуется. Совпадение семантики
-отклонения с тем, что присылает Backend, остаётся интеграционным риском.
+На стороне ML оба пункта закрыты: `runtime-safe-v1` исключает восемь
+count-признаков (`rows_*`, `valid_gps_count_*`), а обучение использует
+point-in-time-safe offline-отклонение (`data/safe_deviation.py`), а не official
+`cur_dev_s`. `tabular-v1` не меняется и молча не нормализуется. Совпадение
+runtime `current_deviation_seconds` Backend'а с той же семантикой — интеграционное
+требование (BACKEND_ML_INTEGRATION §5.1), не ML-модель.
 
 ## 13. Конфиденциальность данных / политика репозитория
 
@@ -250,15 +288,17 @@ offline-отклонение считается point-in-time-safe (`data/safe_d
   используется для validate.
 - Python не хранит `VehicleState` и не делает matching/scheduling.
 
-## 15. Открытые вопросы (modeling/research, не инфраструктура)
+## 15. Статус решений и открытые вопросы
 
-Решено research (train-only): группа B не используется (клоны группы A),
-production-кандидат — HGB H0 DIRECT на `runtime-safe-v1`, обучение на группе A;
-финальный official artifact — этап P3. Открыто:
+Закрыто: группа B не используется (клоны группы A); модель — HGB H0 DIRECT на
+`runtime-safe-v1`, обучение на группе A; P3 воспроизводит research OOF и строит
+финальный artifact одной командой. Открыто:
 
-- соответствие исторических строк без навигационных полей runtime-пакетам;
-- совпадение runtime `current_deviation_seconds` Backend'а с offline
-  safe-семантикой (см. §12).
+- ML: соответствие исторических строк без навигационных полей runtime-пакетам;
+  probability/reason;
+- интеграция (Backend ↔ ML): совпадение runtime `current_deviation_seconds`
+  с offline safe-семантикой, выбор цели при ничьей, реальная частота
+  runtime-telemetry (см. §12).
 
 ## 16. Явные non-goals (для ML-части)
 

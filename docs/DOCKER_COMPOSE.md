@@ -8,9 +8,22 @@
 
 ### ML artifact
 
-ML-сервису нужен Artifact Bundle, примонтированный в `/artifact`. Пока нет
-финальной модели — используем integration-only fixture (см.
-`docs/BACKEND_ML_INTEGRATION.md`, §0):
+ML-сервису нужен Artifact Bundle, примонтированный в `/artifact`
+(`docker-compose.yml` монтирует `${ML_ARTIFACT_DIR:-./ml-artifact}`).
+
+**Финальная модель** (`hgb-h0-runtime-safe-v1-group-a-v1`) строится из
+официального датасета (см. `docs/HACKATHON_RUNBOOK.md`) и подключается через
+`ML_ARTIFACT_DIR` в `.env` — compose и backend не меняются:
+
+```bash
+uv sync --extra dev --extra serving
+MOSTRANSPORT_DATASET=/path/to/official/dataset uv run python scripts/train_final_hgb.py \
+  --artifact-dir artifacts/hgb-h0-runtime-safe-v1-group-a-v1
+echo "ML_ARTIFACT_DIR=./artifacts/hgb-h0-runtime-safe-v1-group-a-v1" >> .env
+```
+
+Без официального датасета — integration-only fixture (INTEGRATION TEST ONLY,
+прогнозы бессмысленны; см. `docs/BACKEND_ML_INTEGRATION.md`, §0):
 
 ```bash
 uv sync --extra serving
@@ -18,12 +31,8 @@ uv run python scripts/build_integration_artifact.py \
   --output ./ml-artifact --replace
 ```
 
-Это создаст `./ml-artifact/` — путь, который `docker-compose.yml` монтирует
-в `ml` по умолчанию (переопределяется через `ML_ARTIFACT_DIR` в `.env`).
-
-> Когда появится реальная модель — просто пересоздать `./ml-artifact` (или
-> поменять `ML_ARTIFACT_DIR`) её Artifact Bundle. Ничего в compose/backend
-> менять не нужно.
+Это создаст `./ml-artifact/` — путь по умолчанию. `/ready` показывает, какой
+artifact загружен (`model_version`, `feature_schema_version`).
 
 ### NDTP-эмулятор
 
@@ -56,7 +65,8 @@ docker compose up --build
 4. `emulator-init` дожидается готовности control API эмулятора (`:18080`) и
    один раз шлёт `POST /api/config` (`docker/emulator-config.json`):
    указывает эмулятору слать NDTP на `backend:9000` и поднимает 4 условных
-   ТС с автогенерируемой телеметрией (`G6CellNav00`) раз в 5 секунд.
+   ТС с автогенерируемой телеметрией (`G6CellNav00`) раз в 5 секунд (это
+   настройка checked-in конфигурации, а не свойство реального потока).
 5. `frontend` стартует, отдаёт статику на `:8080`.
 
 ## 2. Проверка
@@ -73,12 +83,15 @@ open http://localhost:8080                 # dashboard (пока на mock-да�
 
 ## 3. Известные ограничения этой сборки
 
-- **`ready: false` на ML, если `./ml-artifact` не создан** — см. шаг 0.
+- **`ready: false` на ML, если каталог `ML_ARTIFACT_DIR` (по умолчанию
+  `./ml-artifact`) не создан** — см. шаг 0.
 - **Frontend всё ещё на mock-данных** — WebSocket-слой backend↔frontend не
   реализован, это следующий шаг разработки, не задача этого compose-файла.
-- **`PredictionService` — заглушка контракта**: шлёт `unknown`/фиктивные
-  `schedule_context`, поэтому прогнозы ML по нему бессмысленны уже на этом
-  уровне (не только из-за integration-fixture). Реальный schedule/route
-  matching (§5.1 контракта) не реализован — нужны данные расписания.
+- **Контекст запроса к ML формирует backend**: `PredictionService` строит
+  `schedule_context` из расписания в БД (trip matcher, целевое событие,
+  `current_deviation_seconds`). Соответствие этих значений правилам §5.1
+  контракта (в т.ч. point-in-time семантика отклонения, на которой обучена
+  финальная модель) проверяется на стороне backend; из ML-зоны оно не
+  подтверждено. С integration-fixture прогнозы бессмысленны в любом случае.
 - **Нет automatic scheduler** — прогноз не запускается сам по приходу
   телеметрии, только вручную через `GET /prediction/run/:unitId`.

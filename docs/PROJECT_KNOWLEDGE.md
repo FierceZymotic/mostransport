@@ -27,7 +27,9 @@
   тег содержит 92-ячеечную версию notebook, а не исторический 94-ячеечный
   артефакт SHA-256 `9eb2c78b…` — см.
   `notebooks/fz/01_official_dataset_evidence.PROVENANCE.md`);
-- **ОТКРЫТО** — research/modeling-вопрос, ещё не решён.
+- **ЗАКРЫТО** — решение принято и воспроизведено в коде репозитория;
+- **ОТКРЫТО** — research/modeling-вопрос, ещё не решён;
+- **ИНТЕГРАЦИЯ** — открыто на стороне Backend ↔ ML, не ML-модель.
 
 ---
 
@@ -63,53 +65,59 @@ Python-сервис прогнозирует численную задержку
   данные эмулятора — не буквально один и тот же уровень данных. Датасет
   получен внутренним процессингом организаторов из telemetry того типа,
   что даёт эмулятор; перейти от данных эмулятора к представлению, похожему
-  на датасет, можно, но точное преобразование не раскрыто. (Что процессинг
-  именно прореживает 1 Гц до ~12–15 с — не доказано.)
-- `labels_test` — официальный local model-selection split (с ограничением
-  temporal nearness); `validate` — скрытый leaderboard.
+  на датасет, можно, но точное преобразование не раскрыто. Исторический CSV
+  имеет шаг ~12–15 с между пакетами; что runtime-поток имеет ту же частоту —
+  не гарантировано и не доказано.
+- `labels_test` — официальный local evaluation split организаторов (с
+  ограничением temporal nearness); `validate` — скрытый leaderboard.
+  ИСТОРИЧЕСКИ `labels_test` использовался для оценки M1; текущее
+  production-решение его не использует (§10.11).
 - `test/traffic.csv` байт-в-байт равен `validate/traffic.csv`, а факт
   `test/schedule.csv` структурно раскрывает hidden target validate —
   использование этого факта для validate запрещено (ДОКАЗАНО ДАННЫМИ).
 - Train содержит 13 общих с test/validate schedule `tr_id` (группа A) и
   26 train-only/synthetic-candidate `tr_id` (группа B, ~74% строк);
-  что группа B — именно «synthetic» ТС, официально не подтверждено.
+  что группа B — именно «synthetic» ТС, официально не подтверждено (по
+  данным это клоны группы A — §10.3).
 - Организаторские датасеты нельзя публиковать или использовать за
   пределами правил хакатона.
 
-## 10.3. Открытые вопросы (не инфраструктура)
+## 10.3. Статус решений и открытые вопросы
 
-- **РЕШЕНО (research, train-only; notebooks вне репозитория)**: группа B не
-  используется для обучения. Каждый `tr_id` группы B — сдвинутая во времени
-  копия одного `tr_id` группы A (по две на каждый) с зашумлёнными метками; на
-  невиденных real `tr_id` без их собственных клонов B не улучшает MAE —
-  выигрыш M1 от B объясняется доступом к копиям тех же ТС того же дня.
-- **РЕШЕНО (research)**: production-кандидат — `HistGradientBoostingRegressor`
-  DIRECT на `runtime-safe-v1`, обучение только на группе A; конфигурация H0
-  (`models/hgb_v1.py`) — консервативный фиксированный кандидат, а не
-  доказанный глобальный оптимум (research reference: GroupKFold OOF MAE ≈ 77.34,
-  воспроизведение — acceptance gate P3). Финальный official artifact ещё не
-  обучен (P3).
-- **РЕШЕНО для production-кандидата**: сдвиг распределения count-признаков
-  (`rows_*`, `valid_gps_count_*`) из-за частоты telemetry (CSV ~12–15 с между
-  пакетами, эмулятор ~1 Гц; преобразование организаторов не раскрыто, см.
-  §10.2) снят исключением этих восьми признаков в `runtime-safe-v1` (P1).
-  `tabular-v1` не меняется, telemetry не прореживается и молча не
-  нормализуется; parity частоты источников по-прежнему не доказана.
-- **ОТКРЫТО (modeling debt)**: official `cur_dev_s` ≠ гарантированно runtime
-  `current_deviation_seconds`. Runtime-значение по контракту — point-in-time-safe
-  отклонение последнего подтверждённо пройденного события (иначе `0`, см.
-  [BACKEND_ML_INTEGRATION.md](BACKEND_ML_INTEGRATION.md) §5.1). Forensic-анализ
-  показал, что official `cur_dev_s` в real-time один в один не
-  воспроизводится: примерно в 44–45% исследованных real/test случаев
-  соответствующее фактическое событие находится после `T`. `cur_dev_s` —
-  признак `tabular-v1` и основа RESIDUAL-формулировки, поэтому этот skew
-  нужно учесть до финальной production-модели. Это вопрос модели, не API.
-  Для production-кандидата offline-сторона закрыта P1 (`data/safe_deviation.py`:
-  факт `<= T`, research tie-break); открытым остаётся совпадение этой
-  семантики с тем, что реально присылает Backend.
+Research закрыт; production-решение заморожено и воспроизведено (P1–P3).
+
+- **ЗАКРЫТО — группа B** (research, train-only; notebooks вне репозитория):
+  не используется для обучения. Каждый `tr_id` группы B — сдвинутая во
+  времени копия одного `tr_id` группы A (по две на каждый) с зашумлёнными
+  метками; на невиденных real `tr_id` без их собственных клонов B не улучшает
+  MAE — выигрыш M1 от B объяснялся доступом к копиям тех же ТС того же дня.
+- **ЗАКРЫТО — модель**: `HistGradientBoostingRegressor` DIRECT на
+  `runtime-safe-v1`, обучение только на группе A (1141 точка, 13 `tr_id`),
+  фиксированная конфигурация H0 (`models/hgb_v1.py`) — консервативный
+  кандидат, а не доказанный глобальный оптимум.
+- **ЗАКРЫТО — P3**: production training path (`scripts/train_final_hgb.py`)
+  воспроизводит research GroupKFold OOF MAE точно (77.34108978455868, допуск
+  1e-9) и строит финальный artifact `hgb-h0-runtime-safe-v1-group-a-v1`
+  (локально, в `artifacts/`, не коммитится).
+- **ЗАКРЫТО на стороне ML — raw packet counts**: исторический CSV имеет шаг
+  ~12–15 с, а частота runtime-потока не гарантирована и может отличаться,
+  поэтому восемь count-признаков (`rows_*`, `valid_gps_count_*`) исключены из
+  `runtime-safe-v1` (P1). `tabular-v1` не меняется, telemetry не прореживается
+  и молча не нормализуется.
+- **ЗАКРЫТО на стороне ML — current deviation**: обучение использует
+  point-in-time-safe offline-отклонение (`data/safe_deviation.py`: последний
+  подтверждённый факт `<= T`, research tie-break), а не official `cur_dev_s`.
+  ИСТОРИЧЕСКИ: forensic-анализ показал, что official `cur_dev_s` в real-time
+  не воспроизводится (в ~44–45% real/test случаев соответствующее
+  фактическое событие — после `T`).
+- **ЗАКРЫТО — вехи**: P1 (`ml-runtime-safe-v1`), P2 (`ml-hgb-artifact-v1`),
+  P3 (final training path, этот раздел).
+- **ИНТЕГРАЦИЯ**: совпадение runtime `current_deviation_seconds` Backend'а с
+  той же point-in-time семантикой ([BACKEND_ML_INTEGRATION.md](BACKEND_ML_INTEGRATION.md)
+  §5.1); выбор целевого события при ничьей `time_begin`; реальная частота
+  runtime-telemetry. Это обязанности/риски Backend ↔ ML, не ML-модели.
 - **ОТКРЫТО**: соответствие исторических строк без навигационных полей
-  (включая `speed`) runtime-пакетам, где `speed` всегда число, — часть того же
-  исследования распределений.
+  (включая `speed`) runtime-пакетам, где `speed` всегда число.
 - **ОТКРЫТО**: probability/reason — модели нет, `reason = null`.
 
 ## 10.4. Владение (ownership) в команде
@@ -158,8 +166,10 @@ Python-сервис прогнозирует численную задержку
 │   ├── models/                     M1 CatBoost config, HGB H0 config, train regimes
 │   ├── artifacts/                  ArtifactManifest v1, Artifact Bundle v1, legacy ArtifactMetadata
 │   ├── inference/                  ArtifactPredictor, export_bundle, model families, submission
+│   ├── training/                   final_hgb: official Group A → OOF gate → final HGB artifact (P3)
 │   └── serving/                    FastAPI Contract v1, artifact_app, mock_app
-├── scripts/                        run_offline_baseline.py (M1), make_submission.py,
+├── artifacts/                      локальные artifacts/отчёты (в .gitignore)
+├── scripts/                        train_final_hgb.py (P3), run_offline_baseline.py (M1), make_submission.py,
 │                                   build_integration_artifact.py
 │                                     (INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL),
 │                                   smoke_contract_v1.py, smoke_offline.py, inspect_csv.py
@@ -175,7 +185,9 @@ Python-сервис прогнозирует численную задержку
   шаблон `sample_submission.csv`; плановый fingerprint schedule.
 - `data/safe_deviation.py` — offline/training-only point-in-time-safe текущее
   отклонение из factual schedule (`time_fact_begin <= T`, research tie-break);
-  наружу отдаёт только значения для `offline_context(..., current_deviation_seconds=...)`.
+  наружу отдаёт только значения для `offline_context(..., current_deviation_seconds=...)`;
+  `load_train_schedule_facts` — единственный loader фактов (только
+  `train/schedule.csv`, только факт-колонки, порядок CSV).
 - `data/inspection.py`, `data/manifest.py`, `data/canonical.py` — generic
   инструменты вне production-пути признаков.
 - `target/` — `TargetSpec`, `TARGET_SPEC`, `training_target` /
@@ -203,6 +215,11 @@ Python-сервис прогнозирует численную задержку
   `hist_gradient_boosting` (ровно `HistGradientBoostingRegressor`, `skops`
   `model.skops` без pickle; доверен единственный тип `TreePredictor`, деревья
   структурно проверяются до любого `predict`).
+- `training/final_hgb.py` — финальный training path (P3): Group A из
+  planned-only real universe, target по `sample_id`, safe deviation, канонический
+  builder → `runtime-safe-v1`, GroupKFold(5) OOF gate против research reference,
+  финальный H0 fit, manifest с честным provenance (`git_head`, `git_dirty`,
+  `source_tree_sha256`), export и load-back parity; CLI — `scripts/train_final_hgb.py`.
 - `serving/` — `POST /api/v1/predict` (Contract v1), `/health`, `/ready`;
   `artifact_app.py` (production composition root), `mock_app.py`.
 
@@ -213,6 +230,7 @@ data   features   target   artifacts(stdlib)   evaluation   experiments
                      ▲
                   models
 inference → artifacts, features, target, data
+training  → data, features, models, evaluation, artifacts, inference
 serving   → inference, features
 ```
 
@@ -221,16 +239,21 @@ serving   → inference, features
 
 ## 10.9. Offline data flow
 
+Текущий production-путь (P3, `scripts/train_final_hgb.py`):
+
 ```
 official dataset (MOSTRANSPORT_DATASET, вне репозитория)
-  → data/official.py (allowlist, target отдельно)
-  → features/adapters.offline_context → CanonicalBatch
-      (runtime-safe-v1: current_deviation_seconds = data/safe_deviation)
-  → build_features_from_context (tabular-v1)
-  → features_for_schema (tabular-v1 | runtime-safe-v1 через P1-проекцию)
-  → обучение кандидата → ArtifactManifest → inference.export_bundle
-  → ArtifactPredictor: оценка на labels_test / scripts/make_submission.py (validate)
+  → Group A: train points ∩ planned-only real tr_id universe (load_shared_real_vehicle_ids)
+  → target по sample_id (labels_train)
+  → load_train_schedule_facts → safe_current_deviation_seconds (P1)
+  → offline_context(..., current_deviation_seconds=safe) → CanonicalBatch
+  → build_features_from_context (tabular-v1, 37) → project_runtime_safe_features (29)
+  → GroupKFold(5, tr_id) OOF HGB H0 → gate против research reference
+  → fit H0 на всей Group A → ArtifactManifest v1 → export_bundle → load-back parity
+  → scripts/make_submission.py (validate) / serving
 ```
+
+ИСТОРИЧЕСКИ (M1): `tabular-v1` + CatBoost, оценка на `labels_test`.
 
 ## 10.10. Каноническое представление
 
@@ -245,13 +268,14 @@ target_time, координаты цели, `current_deviation_s`, `manual_fill`
 ## 10.11. Стратегия оценки
 
 - Метрика — MAE (ПОДТВЕРЖДЕНО ОРГАНИЗАТОРАМИ).
-- Model selection — `labels_test`; validate — только submission.
-  Production-кандидат HGB выбран train-only (GroupKFold по `tr_id` группы A),
-  `labels_test` для этого выбора не использовался.
-- Baselines на `labels_test`: zero ≈ 103.34 с, train median ≈ 100.87 с,
-  `cur_dev_s` ≈ 93.36 с.
-- M1: 6 заранее заданных CatBoost-экспериментов (3 режима × DIRECT/
-  RESIDUAL); результаты — лог `experiments/m1_runs.jsonl` (локально).
+- ТЕКУЩЕЕ ПРАВИЛО: семейство, конфигурация и признаки заморожены;
+  production-приёмка — воспроизведение GroupKFold(5) OOF MAE на группе A
+  (`training/final_hgb.py`). `labels_test` и validate для нового выбора
+  модели не используются; validate — только submission.
+- ИСТОРИЧЕСКИ (M1): model selection на `labels_test`; baselines на
+  `labels_test`: zero ≈ 103.34 с, train median ≈ 100.87 с, `cur_dev_s` ≈ 93.36 с;
+  6 заранее заданных CatBoost-экспериментов (3 режима × DIRECT/RESIDUAL),
+  лог `experiments/m1_runs.jsonl` (локально).
 
 ## 10.12. Serving-архитектура (ТЕКУЩЕЕ СОСТОЯНИЕ)
 
@@ -310,6 +334,10 @@ target_time_begin + delay (согласовано), reason=null}`, `generated_at
   `--model-family hist_gradient_boosting` — `integration-fixture-hgb-v1`
   (HGB H0/`runtime-safe-v1`) на синтетике:
   **INTEGRATION TEST ONLY · NOT FOR SUBMISSION · NOT A QUALITY MODEL**.
+- Финальный artifact `hgb-h0-runtime-safe-v1-group-a-v1` строится одной
+  командой `scripts/train_final_hgb.py` из официальных данных (локально,
+  `artifacts/`, в git не попадает); evaluation в manifest — OOF
+  (`group_a_groupkfold5_oof`), не in-sample и не `labels_test`.
 
 ## 10.15. Согласованность offline ↔ online
 
@@ -318,9 +346,8 @@ Builder. Тесты и проверка на реальных данных по�
 канонический входной контекст через оба пути даёт побитово одинаковые
 признаки, а один bundle — одинаковый прогноз (в т.ч. для эквивалентных
 timestamps в разных поясах). Это code-path parity, а не полная parity
-источников: runtime `current_deviation_seconds` и official `cur_dev_s`
-семантически не идентичны, распределения telemetry (частота) тоже
-различаются — ОТКРЫТО, см. §10.3.
+источников: совпадение runtime `current_deviation_seconds` Backend'а с
+offline safe-семантикой и частота runtime-telemetry — ИНТЕГРАЦИЯ, см. §10.3.
 
 ## 10.16. Граница Backend ↔ ML
 
