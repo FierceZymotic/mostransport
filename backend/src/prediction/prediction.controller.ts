@@ -13,6 +13,15 @@ export class PredictionController {
   private readonly prisma: PrismaService,
 ) {}
 
+  private async safeRead<T>(operation: () => Promise<T>, fallback: T): Promise<T> {
+    try {
+      return await operation();
+    } catch (error) {
+      console.warn('Dashboard data read failed; returning fallback payload.', error);
+      return fallback;
+    }
+  }
+
 @Get('run/:unitId')
 async run(@Param('unitId') unitId: string) {
   return this.predictionService.predictForVehicle(
@@ -63,10 +72,13 @@ async runAt(
 
 @Get('dashboard/summary')
 async dashboardSummary() {
-  const activeVehicles = await this.prisma.vehicle_last_state.findMany({
-    take: 50,
-    orderBy: { timestamp: 'desc' },
-  });
+  const activeVehicles = await this.safeRead(
+    () => this.prisma.vehicle_last_state.findMany({
+      take: 50,
+      orderBy: { timestamp: 'desc' },
+    }),
+    [],
+  );
 
   const vehicles = activeVehicles.map((row) => ({
     id: String(row.unit_id),
@@ -98,10 +110,13 @@ async dashboardSummary() {
 
 @Get('dashboard/vehicles')
 async dashboardVehicles() {
-  const rows = await this.prisma.vehicle_last_state.findMany({
-    take: 50,
-    orderBy: { timestamp: 'desc' },
-  });
+  const rows = await this.safeRead(
+    () => this.prisma.vehicle_last_state.findMany({
+      take: 50,
+      orderBy: { timestamp: 'desc' },
+    }),
+    [],
+  );
 
   return rows.map((row) => ({
     id: String(row.unit_id),
@@ -116,10 +131,13 @@ async dashboardVehicles() {
 
 @Get('dashboard/alerts')
 async dashboardAlerts() {
-  const rows = await this.prisma.predictions.findMany({
-    take: 10,
-    orderBy: { generated_at: 'desc' },
-  });
+  const rows = await this.safeRead(
+    () => this.prisma.predictions.findMany({
+      take: 10,
+      orderBy: { generated_at: 'desc' },
+    }),
+    [],
+  );
 
   return rows.map((row) => ({
     id: row.request_id,

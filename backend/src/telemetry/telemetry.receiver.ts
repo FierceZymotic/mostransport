@@ -62,31 +62,44 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
           `NDTP packet extracted: ${packet.raw.length} bytes`,
         );
 
-        if (packet.payload.length !== 123) {
+        if (packet.payload.length < 28) {
           this.logger.debug(
             `Skipping non-telemetry packet: payload=${packet.payload.length} bytes`,
           );
           continue;
         }
 
-        const telemetry = this.parser.parse(
-          packet.payload,
-          packet.unitId,
-        );
+        try {
+          const telemetry = this.parser.parse(
+            packet.payload,
+            packet.unitId,
+          );
 
-        const normalizedTelemetry = {
-          ...telemetry,
-          timestamp: normalizeTelemetryTimestamp(telemetry.timestamp),
-        };
+          const normalizedTelemetry = {
+            ...telemetry,
+            timestamp: normalizeTelemetryTimestamp(telemetry.timestamp),
+          };
 
-        this.history.add(normalizedTelemetry);
-        this.stream.publish(normalizedTelemetry);
-        await this.repository.save(normalizedTelemetry);
-        await this.repository.saveLastState(normalizedTelemetry);
+          this.history.add(normalizedTelemetry);
+          this.stream.publish(normalizedTelemetry);
 
-        this.logger.log(
-          `VehicleState: ${JSON.stringify(normalizedTelemetry)}`,
-        );
+          try {
+            await this.repository.save(normalizedTelemetry);
+            await this.repository.saveLastState(normalizedTelemetry);
+          } catch (dbError) {
+            this.logger.warn(
+              `Telemetry persisted locally but DB write failed for unit ${packet.unitId}: ${dbError instanceof Error ? dbError.message : String(dbError)}`,
+            );
+          }
+
+          this.logger.log(
+            `VehicleState: ${JSON.stringify(normalizedTelemetry)}`,
+          );
+        } catch (error) {
+          this.logger.warn(
+            `Dropping NDTP packet from unit ${packet.unitId}: ${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
       }
     });
 
