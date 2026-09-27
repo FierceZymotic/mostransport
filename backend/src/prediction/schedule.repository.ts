@@ -18,38 +18,61 @@ export interface ScheduleFactRow {
   time_fact_begin: string | null;
 }
 
+export type TargetSelectionStatus = 'ok' | 'none' | 'ambiguous';
+
+export interface TargetSelection {
+  status: TargetSelectionStatus;
+  action: TargetScheduleAction | null;
+  /** Number of planned actions at the earliest time in the horizon. */
+  candidates: number;
+}
+
+function numericActionId(row: TargetScheduleAction): number {
+  return Number.parseInt(row.target_action_id, 10) || 0;
+}
+
+/**
+ * Contract docs §5.1: the target is the earliest planned action with
+ * T + 10 min < time_begin <= T + 15 min. The organizer defines no tie-break when several
+ * actions share that earliest time, so an id order must not decide which physical stop is
+ * the target:
+ *  - all tied actions identical in time, geometry and manual_fill (= identical model inputs,
+ *    proven equivalent): collapse; the reported id is trace-only (lowest numeric id);
+ *  - otherwise: AMBIGUOUS, no action (the caller refuses with 422 TARGET_AMBIGUOUS).
+ */
+export function classifyTargetActions(
+  rows: TargetScheduleAction[],
+  predictionTime: Date,
+): TargetSelection {
+  const from = predictionTime.getTime() + 10 * 60 * 1000;
+  const to = predictionTime.getTime() + 15 * 60 * 1000;
+  const inHorizon = rows.filter((row) => {
+    const time = new Date(row.target_time_begin).getTime();
+    return time > from && time <= to;
+  });
+  if (inHorizon.length === 0) {
+    return { status: 'none', action: null, candidates: 0 };
+  }
+  const earliest = Math.min(...inHorizon.map((row) => new Date(row.target_time_begin).getTime()));
+  const atEarliest = inHorizon
+    .filter((row) => new Date(row.target_time_begin).getTime() === earliest)
+    .sort((a, b) => numericActionId(a) - numericActionId(b));
+  const first = atEarliest[0];
+  const equivalent = atEarliest.every(
+    (row) => row.target_lat === first.target_lat && row.target_lon === first.target_lon && row.manual_fill === first.manual_fill,
+  );
+  if (!equivalent) {
+    return { status: 'ambiguous', action: null, candidates: atEarliest.length };
+  }
+  return { status: 'ok', action: first, candidates: atEarliest.length };
+}
+
+/** Backwards-compatible helper: the unique (or proven-equivalent) target, else null. */
 export function resolveTargetActionFromRows(
   rows: TargetScheduleAction[],
   predictionTime: Date,
 ): TargetScheduleAction | null {
-  if (rows.length === 0) {
-    return null;
-  }
-
-  const from = new Date(predictionTime.getTime() + 10 * 60 * 1000);
-  const to = new Date(predictionTime.getTime() + 15 * 60 * 1000);
-
-  const filtered = rows.filter((row) => {
-    const time = new Date(row.target_time_begin);
-    return time > from && time <= to;
-  });
-
-  if (filtered.length === 0) {
-    return null;
-  }
-
-  filtered.sort((a, b) => {
-    const timeDiff = new Date(a.target_time_begin).getTime() - new Date(b.target_time_begin).getTime();
-    if (timeDiff !== 0) {
-      return timeDiff;
-    }
-
-    const actionA = Number.parseInt(a.target_action_id, 10) || 0;
-    const actionB = Number.parseInt(b.target_action_id, 10) || 0;
-    return actionA - actionB;
-  });
-
-  return filtered[0];
+  return classifyTargetActions(rows, predictionTime).action;
 }
 
 export function resolveCurrentDeviationFromRows(
@@ -95,7 +118,7 @@ export class ScheduleRepository {
   async findTargetAction(
     trId: string,
     predictionTime: Date,
-  ): Promise<TargetScheduleAction | null> {
+  ): Promise<TargetSelection> {
     const from = new Date(predictionTime.getTime() + 10 * 60 * 1000);
     const to = new Date(predictionTime.getTime() + 15 * 60 * 1000);
 
@@ -116,7 +139,7 @@ export class ScheduleRepository {
       `,
     );
 
-    return resolveTargetActionFromRows(rows, predictionTime);
+    return classifyTargetActions(rows, predictionTime);
   }
 
   async getCurrentDeviation(

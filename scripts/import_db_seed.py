@@ -1,13 +1,15 @@
 from __future__ import annotations
 
+import argparse
 import json
+import os
 from pathlib import Path
 
 import pandas as pd
 import psycopg
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_URL = "postgresql://postgres:postgres@localhost:5432/mostransport"
+DB_URL = os.environ.get("DATABASE_URL_PSYCOPG", "postgresql://postgres:postgres@localhost:5432/mostransport")
 
 
 def as_utc(series: pd.Series) -> pd.Series:
@@ -106,11 +108,40 @@ def import_schedule_actions(conn: psycopg.Connection) -> int:
     return inserted
 
 
+def import_vehicle_identity(conn: psycopg.Connection, traffic_csv: Path) -> int:
+    """unit_id -> current_tr_id from organizer telemetry (1:1 in the supplied data).
+
+    Explicit deployment setup, label-free and idempotent (upsert). Without this mapping the
+    trip matcher has no preferred trip and falls back to the globally nearest schedule
+    action, which can select another vehicle's trip. Train-only synthetic trips (tr_id
+    9000xxx) are excluded, as in the matcher itself.
+    """
+    pairs = pd.read_csv(traffic_csv, usecols=["tr_id", "unit_id"]).drop_duplicates()
+    pairs = pairs[~pairs.tr_id.astype(str).str.startswith("9000")]
+    if pairs.unit_id.duplicated().any() or pairs.tr_id.duplicated().any():
+        raise SystemExit("unit_id <-> tr_id is not 1:1 in this telemetry file; refusing to guess identity")
+    with conn.cursor() as cur:
+        for row in pairs.itertuples(index=False):
+            cur.execute(
+                "INSERT INTO vehicles (unit_id, current_tr_id) VALUES (%s, %s) "
+                "ON CONFLICT (unit_id) DO UPDATE SET current_tr_id = EXCLUDED.current_tr_id",
+                (str(row.unit_id), str(row.tr_id)),
+            )
+    conn.commit()
+    return len(pairs)
+
+
 def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--vehicles-from-traffic", type=Path, default=None,
+                        help="organizer traffic CSV: populate vehicles(unit_id -> current_tr_id)")
+    args = parser.parse_args()
     with psycopg.connect(DB_URL) as conn:
         ensure_schema(conn)
         telemetry_inserted = import_telemetry(conn)
         schedule_inserted = import_schedule_actions(conn)
+        if args.vehicles_from_traffic is not None:
+            print("vehicles_upserted=", import_vehicle_identity(conn, args.vehicles_from_traffic))
 
         with conn.cursor() as cur:
             print("telemetry_rows=", cur.execute("SELECT COUNT(*) FROM telemetry").fetchone()[0])

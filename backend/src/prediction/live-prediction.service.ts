@@ -6,7 +6,7 @@ import {
 } from '@nestjs/common';
 import { TelemetryStreamService } from '../telemetry/telemetry-stream.service.js';
 import { VehicleState } from '../telemetry/vehicle-state.js';
-import { PredictionService } from './prediction.service.js';
+import { PredictionIneligibleError, PredictionService } from './prediction.service.js';
 
 @Injectable()
 export class LivePredictionService
@@ -81,11 +81,21 @@ export class LivePredictionService
         `Live prediction: unit=${state.unitId}, delay=${prediction.prediction.delay_seconds}s`,
       );
     } catch (error) {
-      this.logger.debug(
-        `Live prediction skipped for unit ${state.unitId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      if (error instanceof PredictionIneligibleError) {
+        // Explicit refusal (e.g. TARGET_AMBIGUOUS, NO_TRIP_MATCH): no fake target, nothing
+        // published; skip this unit until the next prediction cycle.
+        this.lastPredictionAt.set(state.unitId, now);
+        this.logger.log(
+          `Live prediction skipped for unit ${state.unitId}: ${error.code}`,
+        );
+      } else {
+        // Transient failure (e.g. ML not ready, DB): retried on the next valid packet.
+        this.logger.warn(
+          `Live prediction failed for unit ${state.unitId}: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      }
     } finally {
       this.inFlight.delete(state.unitId);
     }

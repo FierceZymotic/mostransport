@@ -50,6 +50,26 @@ def seed(monkeypatch):
     return module
 
 
+def test_vehicle_identity_is_one_to_one_and_excludes_synthetic_trips(seed, tmp_path):
+    csv = tmp_path / "traffic.csv"
+    csv.write_text("tr_id,unit_id,speed\n134040,1105498,1\n134040,1105498,2\n9000003,777,0\n122048,26,5\n")
+    conn = _Conn()
+    assert seed.import_vehicle_identity(conn, csv) == 2
+    params = sorted(p for _, p in conn.log)
+    assert params == [("1105498", "134040"), ("26", "122048")]
+    assert all("ON CONFLICT (unit_id)" in sql for sql, _ in conn.log)
+    assert conn.commits == 1
+
+
+def test_vehicle_identity_refuses_ambiguous_mapping(seed, tmp_path):
+    csv = tmp_path / "traffic.csv"
+    csv.write_text("tr_id,unit_id\n1,10\n2,10\n")
+    conn = _Conn()
+    with pytest.raises(SystemExit):
+        seed.import_vehicle_identity(conn, csv)
+    assert conn.log == []
+
+
 def test_plan_and_telemetry_times_are_bound_as_aware_utc(seed):
     # The same instants as the frozen contract (naive organizer time == UTC), independent of
     # the database session TimeZone.

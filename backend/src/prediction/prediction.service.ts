@@ -1,4 +1,4 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
 import { demoClock } from '../common/demo-clock.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TelemetryRepository } from '../telemetry/telemetry.repository.js';
@@ -11,6 +11,20 @@ import { ScheduleRepository } from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
 export class InvalidPredictionTimeError extends BadRequestException {}
+
+export type PredictionIneligibleCode =
+  | 'NO_TELEMETRY'
+  | 'NO_VALID_GPS'
+  | 'NO_TRIP_MATCH'
+  | 'NO_TARGET_IN_HORIZON'
+  | 'TARGET_AMBIGUOUS';
+
+/** The point is not eligible for a Contract v1 request (explicit 422, not a crash or a guess). */
+export class PredictionIneligibleError extends UnprocessableEntityException {
+  constructor(readonly code: PredictionIneligibleCode, detail: string) {
+    super({ code, detail });
+  }
+}
 
 /**
  * Validates an explicit model-time prediction instant T. T is never substituted: the
@@ -57,31 +71,47 @@ export class PredictionService {
       );
 
     if (vehicleHistory.length === 0) {
-      throw new Error(
+      throw new PredictionIneligibleError(
+        'NO_TELEMETRY',
         `No telemetry found for unit ${unitId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }
 
-    const latest = vehicleHistory[vehicleHistory.length - 1];
-
-    const match = await this.tripMatcher.findTrip(
-  latest.latitude,
-  latest.longitude,
-);
-    if (!match) {
-      throw new Error(
-        `Could not determine trip for unit ${unitId}`,
-      );
+    // Match on the latest strict-valid GPS at or before T (history is <= T); an invalid fix
+    // carries no trustworthy location.
+    const latestValid = [...vehicleHistory].reverse().find(
+      (state) => state.locationValid && Number.isFinite(state.latitude) && Number.isFinite(state.longitude),
+    );
+    if (!latestValid) {
+      throw new PredictionIneligibleError('NO_VALID_GPS', `No strict-valid GPS <= T for unit ${unitId}`);
     }
 
-    const targetAction =
+    const match = await this.tripMatcher.findTrip(
+      latestValid.latitude,
+      latestValid.longitude,
+      String(unitId),
+      normalizedPredictionTime,
+    );
+    if (!match) {
+      throw new PredictionIneligibleError('NO_TRIP_MATCH', `Could not determine trip for unit ${unitId}`);
+    }
+
+    const selection =
       await this.scheduleRepository.findTargetAction(
         match.trId,
         normalizedPredictionTime,
       );
 
+    if (selection.status === 'ambiguous') {
+      throw new PredictionIneligibleError(
+        'TARGET_AMBIGUOUS',
+        `${selection.candidates} different planned actions share the earliest time in (T+10m, T+15m] for trId ${match.trId}`,
+      );
+    }
+    const targetAction = selection.action;
     if (!targetAction) {
-      throw new Error(
+      throw new PredictionIneligibleError(
+        'NO_TARGET_IN_HORIZON',
         `No target schedule action found for trId ${match.trId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }

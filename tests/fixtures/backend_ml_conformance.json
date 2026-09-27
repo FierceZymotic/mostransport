@@ -1,0 +1,31 @@
+{
+  "description": "Shared Backend <-> ML conformance cases. target_selection: Contract docs 5.1 (earliest planned action in (T+10m, T+15m]; several actions at that earliest time -> ambiguous unless all are identical in time, geometry and manual_fill, i.e. identical model inputs, which collapse to the lowest numeric id as a trace-only identifier).",
+  "target_selection": [
+    {"name": "earliest action in horizon", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "300", "plan": "2026-01-06T03:48:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false},
+      {"id": "200", "plan": "2026-01-06T03:47:00Z", "lat": 55.71, "lon": 37.61, "manual_fill": false},
+      {"id": "100", "plan": "2026-01-06T03:55:00Z", "lat": 55.72, "lon": 37.62, "manual_fill": false}],
+     "expected_status": "ok", "expected_id": "200"},
+    {"name": "tie between different stops is ambiguous (no arbitrary id)", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "200", "plan": "2026-01-06T03:47:00Z", "lat": 55.6594982, "lon": 37.48110251, "manual_fill": false},
+      {"id": "100", "plan": "2026-01-06T03:47:00Z", "lat": 55.66166753, "lon": 37.48176323, "manual_fill": false},
+      {"id": "300", "plan": "2026-01-06T03:48:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false}],
+     "expected_status": "ambiguous", "expected_id": null},
+    {"name": "tie with different manual_fill is ambiguous", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "1", "plan": "2026-01-06T03:47:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": true},
+      {"id": "2", "plan": "2026-01-06T03:47:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false}],
+     "expected_status": "ambiguous", "expected_id": null},
+    {"name": "proven-equivalent duplicates collapse (identical time, geometry, manual_fill)", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "10", "plan": "2026-01-06T03:47:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false},
+      {"id": "9", "plan": "2026-01-06T03:47:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false}],
+     "expected_status": "ok", "expected_id": "9"},
+    {"name": "T+10m is excluded, T+15m is included", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "1", "plan": "2026-01-06T03:45:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false},
+      {"id": "2", "plan": "2026-01-06T03:50:00Z", "lat": 55.71, "lon": 37.61, "manual_fill": false}],
+     "expected_status": "ok", "expected_id": "2"},
+    {"name": "nothing in horizon", "T": "2026-01-06T03:35:00Z", "rows": [
+      {"id": "1", "plan": "2026-01-06T03:44:00Z", "lat": 55.70, "lon": 37.60, "manual_fill": false},
+      {"id": "2", "plan": "2026-01-06T03:51:00Z", "lat": 55.71, "lon": 37.61, "manual_fill": false}],
+     "expected_status": "none", "expected_id": null}
+  ]
+}
