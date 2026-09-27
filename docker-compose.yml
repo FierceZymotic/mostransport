@@ -1,9 +1,9 @@
 name: mostransport
 
 services:
-  # ML serving (owned by ML team). Runs with the integration-only artifact
-  # by default — see docs/DOCKER_COMPOSE.md for how to point it at a real
-  # Artifact Bundle instead. INTEGRATION TEST ONLY predictions until then.
+  # ML serving (owned by ML team). Mounts the final HGB bundle
+  # hgb-h0-runtime-safe-v1-group-a-v1 by default (git-ignored; produced by
+  # scripts/train_final_hgb.py, see docs/DOCKER_COMPOSE.md). Healthy == /ready.
   ml:
     build:
       context: .
@@ -13,9 +13,11 @@ services:
     environment:
       MOSTRANSPORT_ARTIFACT_DIR: /artifact
     volumes:
-      - ${ML_ARTIFACT_DIR:-./ml-artifact}:/artifact:ro
+      # The committed ./ml-artifact is an integration fixture WITHOUT its model file and is never ready.
+      - ${ML_ARTIFACT_DIR:-./artifacts/hgb-h0-runtime-safe-v1-group-a-v1}:/artifact:ro
     healthcheck:
-      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=3)"]
+      # Healthy == model artifact loaded and compatible (/ready), not merely "process alive" (/health).
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/ready', timeout=3)"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -44,7 +46,8 @@ services:
       context: ./backend
     depends_on:
       ml:
-        condition: service_healthy
+        # Ingestion and UI start even when ML is honestly not ready; predictions then return 503.
+        condition: service_started
       postgres:
         condition: service_healthy
     ports:
@@ -55,6 +58,16 @@ services:
       TELEMETRY_PORT: 9000
       ML_SERVICE_URL: http://ml:8000
       DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mostransport?schema=public
+      # Demo clock (backend/src/common/demo-clock.ts). This stack's emulator stamps packets
+      # with the live wall clock, so the demo shifts the whole session by whole days onto the
+      # schedule day (constant offset, intervals preserved). Use off for organizer data that
+      # is already on the schedule day.
+      DEMO_CLOCK_MODE: ${DEMO_CLOCK_MODE:-day_shift}
+      DEMO_CLOCK_TARGET_DAY: ${DEMO_CLOCK_TARGET_DAY:-2026-01-06}
+      DEMO_CLOCK_ANCHOR: ${DEMO_CLOCK_ANCHOR:-}
+      # none = no factual passage feed exists (current deviation flagged unavailable);
+      # replay_import = TRAIN-day facts imported with scripts/import_db_seed.py --replay-facts.
+      SCHEDULE_FACT_SOURCE: ${SCHEDULE_FACT_SOURCE:-none}
 
   frontend:
     build:
