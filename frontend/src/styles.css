@@ -131,3 +131,35 @@ h2 { margin: 0; font-size: 18px; }
 .ymarker.medium span { background: #f5c451; }
 .ymarker.high span { background: #ff5967; box-shadow: 0 0 14px #ff5967; }
 .ymarker.selected { outline: 3px solid #fff; outline-offset: 2px; }
+
+/* ---- realtime dashboard state (canonical risk incl. "unknown" = no prediction yet) ---- */
+.live.offline { color: #7e8998; }
+.live.offline .live-dot { background: #5b6674; box-shadow: none; }
+
+.risk-dot.unknown { background: #5b6674; }
+.ymarker.unknown span { background: #7e8998; }
+.badge.unknown { background: #1a222c; color: #9aa7b6; }
+
+.vehicle-card { border-left: 3px solid transparent; }
+.vehicle-card.risk-high { border-left-color: #ff5967; }
+.vehicle-card.risk-medium { border-left-color: #f5c451; }
+.vehicle-status { display: block; margin-top: 2px; }
+.vehicle-main .vehicle-status.high { color: #ff7b86; }
+.vehicle-main .vehicle-status.medium { color: #f5cf68; }
+.vehicle-main .vehicle-status.low { color: #7fd8a9; }
+.vehicle-main .vehicle-status.unknown { color: #6e7a89; }
+
+.incident-title { margin-bottom: 10px; }
+.incident .badge { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; }
+.incident-rows { margin-top: 12px; }
+.incident-row strong { font-size: 12px; }
+
+.reason.degraded { color: #f5c451; }
+.reason.none, .reason.unknown { color: #7e8998; }
+
+.freshness { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; color: #6e7a89; font-size: 10px; }
+
+.incident-empty { color: #6e7a89; }
+.incident-empty p { margin: 10px 0 4px; font-size: 12px; }
+
+.empty-state { position: absolute; inset: 0; display: grid; place-items: center; color: #6e7a89; font-size: 13px; }

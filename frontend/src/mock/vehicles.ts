@@ -1,6 +1,19 @@
-import type { Vehicle } from "../types";
+import type { RiskLevel } from "../types";
 
-export const vehicles: Vehicle[] = [
+// Static demo data (not used by the live dashboard).
+interface MockVehicle {
+  id: string;
+  route: string;
+  lat: number;
+  lon: number;
+  speed: number;
+  delayMinutes: number;
+  risk: RiskLevel;
+  reason: string;
+  segment: string;
+}
+
+export const vehicles: MockVehicle[] = [
   {
     id: "A123",
     route: "Т43",
