@@ -162,7 +162,7 @@ artifact'а (`tabular-v1` у legacy CatBoost и `integration-fixture-v1`,
 |---|---|---|
 | `request_id` | string | непустой; **opaque correlation id**: UUID рекомендуется, не обязателен; возвращается без изменений |
 | `prediction_time` | aware ISO-8601 | момент прогноза `T` |
-| `vehicle_context.unit_id` / `tr_id` / `route_id` | string | непустые строки; только трассировка, не признаки |
+| `vehicle_context.unit_id` / `tr_id` / `route_id` | string | непустые строки; только трассировка, не признаки. Backend заполняет `route_id` значением `tr_id` (сущности маршрута нет) |
 | `schedule_context.target_action_id` | string | выбранное целевое плановое событие (§5.1); только трассировка |
 | `schedule_context.target_time_begin` | aware ISO-8601 | его плановое время; `target_time_begin − T ∈ (10, 15]` минут |
 | `schedule_context.target_lat` / `target_lon` | number | координаты этого события; `[-90, 90]` / `[-180, 180]` |

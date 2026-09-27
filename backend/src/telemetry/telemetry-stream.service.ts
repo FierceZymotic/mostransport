@@ -72,10 +72,14 @@ export class TelemetryStreamService {
 
   publishPrediction(
     prediction: PredictionResponse,
+    meta?: Record<string, unknown>,
   ): void {
+    // `payload` stays the unmodified ML response; `meta` is optional Backend-side context
+    // (e.g. current_deviation_status) that Contract v1 cannot carry.
     const payload = JSON.stringify({
       event: 'prediction',
       payload: prediction,
+      ...(meta ? { meta } : {}),
     });
 
     for (const client of [...this.clients]) {

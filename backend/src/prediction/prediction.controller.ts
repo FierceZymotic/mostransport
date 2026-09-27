@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { demoClock } from '../common/demo-clock.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { PredictionService } from './prediction.service.js';
 import { ScheduleRepository } from './schedule.repository.js';
@@ -53,10 +54,14 @@ async run(@Param('unitId') unitId: string) {
 async matcherTest(
   @Query('lat') lat: string,
   @Query('lon') lon: string,
+  @Query('unitId') unitId?: string,
+  @Query('time') time?: string,
 ) {
   return this.tripMatcherService.findTrip(
     Number(lat),
     Number(lon),
+    unitId,
+    time ? new Date(time) : demoClock.now(),
   );
 }
 @Get('run-at/:unitId')

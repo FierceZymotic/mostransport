@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable, UnprocessableEntityException } from '@nestjs/common';
+import { demoClock } from '../common/demo-clock.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TelemetryRepository } from '../telemetry/telemetry.repository.js';
 import { MlClientService } from './ml/ml.client.service.js';
@@ -6,65 +7,45 @@ import {
   PredictionRequest,
   PredictionResponse,
 } from './ml/ml.types.js';
-import { ScheduleRepository } from './schedule.repository.js';
+import {
+  CurrentDeviationStatus,
+  DEGRADED_CURRENT_DEVIATION_REASON,
+  ScheduleRepository,
+} from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
-export const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
+export class InvalidPredictionTimeError extends BadRequestException {}
 
-export function normalizeTimestampToFrozenContract(
-  value: Date | number,
-): number {
-  const timestamp = value instanceof Date ? value.getTime() : Number(value);
+export type PredictionIneligibleCode =
+  | 'NO_TELEMETRY'
+  | 'NO_VALID_GPS'
+  | 'NO_TRIP_MATCH'
+  | 'NO_TARGET_IN_HORIZON'
+  | 'TARGET_AMBIGUOUS';
 
-  if (!Number.isFinite(timestamp)) {
-    return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
+/** The point is not eligible for a Contract v1 request (explicit 422, not a crash or a guess). */
+export class PredictionIneligibleError extends UnprocessableEntityException {
+  constructor(readonly code: PredictionIneligibleCode, detail: string) {
+    super({ code, detail });
   }
-
-  const candidate = new Date(timestamp);
-
-  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
-  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
-
-  // Исторические данные 6 января оставляем как есть.
-  if (candidate >= frozenStart && candidate < frozenEnd) {
-    return Math.floor(candidate.getTime() / 1000);
-  }
-
-  // Live/demo: переносим текущую дату на 6 января,
-  // сохраняя время суток.
-  const demoTime = new Date(
-    Date.UTC(
-      2026,
-      0,
-      6,
-      candidate.getUTCHours(),
-      candidate.getUTCMinutes(),
-      candidate.getUTCSeconds(),
-      candidate.getUTCMilliseconds(),
-    ),
-  );
-
-  return Math.floor(demoTime.getTime() / 1000);
 }
 
-export function normalizePredictionTime(input: Date): Date {
+/**
+ * Validates an explicit model-time prediction instant T. T is never substituted: the
+ * Backend clock (common/demo-clock.ts) is the only place where live time is mapped.
+ */
+export function requirePredictionTime(input: Date): Date {
   const value = new Date(input);
-
   if (Number.isNaN(value.getTime())) {
-    return new Date(DEFAULT_DEMO_PREDICTION_TIME);
+    throw new InvalidPredictionTimeError('prediction time must be a valid ISO-8601 timestamp');
   }
-
-  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
-  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
-  if (value >= frozenStart && value < frozenEnd) {
-    return value;
-  }
-
-  return new Date(DEFAULT_DEMO_PREDICTION_TIME);
+  return value;
 }
 
-export function normalizeTelemetryTimestamp(input: number | Date): number {
-  return normalizeTimestampToFrozenContract(input);
+/** ML response plus Backend-side input provenance that Contract v1 cannot carry. */
+export interface PredictionOutcome {
+  response: PredictionResponse;
+  currentDeviationStatus: CurrentDeviationStatus;
 }
 
 @Injectable()
@@ -80,9 +61,10 @@ export class PredictionService {
   async predictForVehicle(
     unitId: number,
   ): Promise<PredictionResponse> {
+    // "Now" in model time: the same session clock that stamps ingested telemetry.
     return this.predictForVehicleAt(
       unitId,
-      DEFAULT_DEMO_PREDICTION_TIME,
+      demoClock.now(),
     );
   }
 
@@ -90,7 +72,14 @@ export class PredictionService {
     unitId: number,
     predictionTime: Date,
   ): Promise<PredictionResponse> {
-    const normalizedPredictionTime = normalizePredictionTime(predictionTime);
+    return (await this.predictWithStatus(unitId, predictionTime)).response;
+  }
+
+  async predictWithStatus(
+    unitId: number,
+    predictionTime: Date,
+  ): Promise<PredictionOutcome> {
+    const normalizedPredictionTime = requirePredictionTime(predictionTime);
 
     const vehicleHistory =
       await this.telemetryRepository.findHistory(
@@ -99,34 +88,57 @@ export class PredictionService {
       );
 
     if (vehicleHistory.length === 0) {
-      throw new Error(
+      throw new PredictionIneligibleError(
+        'NO_TELEMETRY',
         `No telemetry found for unit ${unitId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }
 
-    const latest = vehicleHistory[vehicleHistory.length - 1];
-
-    const match = await this.tripMatcher.findTrip(
-  latest.latitude,
-  latest.longitude,
-);
-    if (!match) {
-      throw new Error(
-        `Could not determine trip for unit ${unitId}`,
-      );
+    // Match on the latest strict-valid GPS at or before T (history is <= T); an invalid fix
+    // carries no trustworthy location.
+    const latestValid = [...vehicleHistory].reverse().find(
+      (state) => state.locationValid && Number.isFinite(state.latitude) && Number.isFinite(state.longitude),
+    );
+    if (!latestValid) {
+      throw new PredictionIneligibleError('NO_VALID_GPS', `No strict-valid GPS <= T for unit ${unitId}`);
     }
 
-    const targetAction =
+    const match = await this.tripMatcher.findTrip(
+      latestValid.latitude,
+      latestValid.longitude,
+      String(unitId),
+      normalizedPredictionTime,
+    );
+    if (!match) {
+      throw new PredictionIneligibleError('NO_TRIP_MATCH', `Could not determine trip for unit ${unitId}`);
+    }
+
+    const selection =
       await this.scheduleRepository.findTargetAction(
         match.trId,
         normalizedPredictionTime,
       );
 
+    if (selection.status === 'ambiguous') {
+      throw new PredictionIneligibleError(
+        'TARGET_AMBIGUOUS',
+        `${selection.candidates} different planned actions share the earliest time in (T+10m, T+15m] for trId ${match.trId}`,
+      );
+    }
+    const targetAction = selection.action;
     if (!targetAction) {
-      throw new Error(
+      throw new PredictionIneligibleError(
+        'NO_TARGET_IN_HORIZON',
         `No target schedule action found for trId ${match.trId} at ${normalizedPredictionTime.toISOString()}`,
       );
     }
+
+    // P1 semantics. Without a fact source the Contract v1 scalar is 0 and the status says
+    // "unavailable"; it is never presented as a confirmed on-time value.
+    const deviation = await this.scheduleRepository.getCurrentDeviation(
+      match.trId,
+      normalizedPredictionTime,
+    );
 
     const request: PredictionRequest = {
       request_id: crypto.randomUUID(),
@@ -150,11 +162,7 @@ export class PredictionService {
         target_lat: targetAction.target_lat,
         target_lon: targetAction.target_lon,
 
-        current_deviation_seconds:
-  await this.scheduleRepository.getCurrentDeviation(
-    match.trId,
-    normalizedPredictionTime,
-  ),
+        current_deviation_seconds: deviation.seconds,
 
         manual_fill: targetAction.manual_fill,
       },
@@ -197,14 +205,17 @@ await this.prisma.predictions.create({
     status: response.status,
     delay_seconds: response.prediction.delay_seconds,
     target_time: new Date(response.prediction.target_time),
-    reason: response.prediction.reason,
+    // Degraded-mode marker (additive; Contract v1 unchanged): the model input
+    // current_deviation_seconds was not backed by any fact source.
+    reason: response.prediction.reason
+      ?? (deviation.status === 'unavailable_no_fact_source' ? DEGRADED_CURRENT_DEVIATION_REASON : null),
     generated_at: new Date(response.generated_at),
     model_version: response.model_version,
     feature_schema_version: response.feature_schema_version,
   },
 });
 
-return response;
+return { response, currentDeviationStatus: deviation.status };
 
   }
 
