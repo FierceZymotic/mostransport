@@ -10,6 +10,7 @@ import { NdtpPacketExtractor } from './ndtp/ndtp.packet-extractor.js';
 import { TelemetryParser } from './telemetry.parser.js';
 import { TelemetryHistory } from './telemetry-history.js';
 import { TelemetryRepository } from './telemetry.repository.js';
+import { TelemetryStreamService } from './telemetry-stream.service.js';
 
 @Injectable()
 export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
@@ -25,6 +26,7 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
     private readonly parser: TelemetryParser,
     private readonly history: TelemetryHistory,
     private readonly repository: TelemetryRepository,
+    private readonly stream: TelemetryStreamService,
   ) {}
 
   onModuleInit() {
@@ -78,6 +80,7 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
         };
 
         this.history.add(normalizedTelemetry);
+        this.stream.publish(normalizedTelemetry);
         await this.repository.save(normalizedTelemetry);
         await this.repository.saveLastState(normalizedTelemetry);
 

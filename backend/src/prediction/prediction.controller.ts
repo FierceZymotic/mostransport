@@ -1,4 +1,5 @@
 import { Controller, Get, Param, Query } from '@nestjs/common';
+import { PrismaService } from '../prisma/prisma.service.js';
 import { PredictionService } from './prediction.service.js';
 import { ScheduleRepository } from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
@@ -9,6 +10,7 @@ export class PredictionController {
   private readonly predictionService: PredictionService,
   private readonly scheduleRepository: ScheduleRepository,
   private readonly tripMatcherService: TripMatcherService,
+  private readonly prisma: PrismaService,
 ) {}
 
 @Get('run/:unitId')
@@ -57,5 +59,76 @@ async runAt(
     Number(unitId),
     new Date(time),
   );
+}
+
+@Get('dashboard/summary')
+async dashboardSummary() {
+  const activeVehicles = await this.prisma.vehicle_last_state.findMany({
+    take: 50,
+    orderBy: { timestamp: 'desc' },
+  });
+
+  const vehicles = activeVehicles.map((row) => ({
+    id: String(row.unit_id),
+    route: row.tr_id ?? 'LIVE',
+    lat: row.latitude ?? 0,
+    lon: row.longitude ?? 0,
+    speed: row.speed ?? 0,
+    delayMinutes: row.speed != null && row.speed < 10 ? 5 : 0,
+    risk: row.speed != null && row.speed < 10 ? 'high' : row.speed != null && row.speed < 20 ? 'medium' : 'low',
+    reason: row.speed != null && row.speed < 10
+      ? 'Низкая скорость в текущем состоянии'
+      : row.speed != null && row.speed < 20
+        ? 'Некоторое отклонение от графика'
+        : 'Отклонений не обнаружено',
+    segment: row.location_valid ? 'Realtime telemetry' : 'Awaiting GPS',
+    updatedAt: row.timestamp.toISOString(),
+  }));
+
+  const currentRisk = vehicles.filter((vehicle) => vehicle.risk === 'high').length;
+
+  return {
+    total: vehicles.length,
+    highRisk: currentRisk,
+    mediumRisk: vehicles.filter((vehicle) => vehicle.risk === 'medium').length,
+    lowRisk: vehicles.filter((vehicle) => vehicle.risk === 'low').length,
+    vehicles,
+  };
+}
+
+@Get('dashboard/vehicles')
+async dashboardVehicles() {
+  const rows = await this.prisma.vehicle_last_state.findMany({
+    take: 50,
+    orderBy: { timestamp: 'desc' },
+  });
+
+  return rows.map((row) => ({
+    id: String(row.unit_id),
+    route: row.tr_id ?? 'LIVE',
+    lat: row.latitude ?? 0,
+    lon: row.longitude ?? 0,
+    speed: row.speed ?? 0,
+    locationValid: row.location_valid ?? false,
+    updatedAt: row.timestamp.toISOString(),
+  }));
+}
+
+@Get('dashboard/alerts')
+async dashboardAlerts() {
+  const rows = await this.prisma.predictions.findMany({
+    take: 10,
+    orderBy: { generated_at: 'desc' },
+  });
+
+  return rows.map((row) => ({
+    id: row.request_id,
+    unitId: String(row.unit_id),
+    routeId: row.tr_id ?? 'unknown',
+    status: row.status,
+    delaySeconds: row.delay_seconds ?? 0,
+    reason: row.reason ?? 'prediction',
+    generatedAt: row.generated_at.toISOString(),
+  }));
 }
 }

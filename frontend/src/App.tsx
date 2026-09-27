@@ -1,8 +1,34 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { AlertTriangle, Bus, Clock3, Radio, Search, Wifi } from "lucide-react";
 import { vehicles } from "./mock/vehicles";
 import YandexMap from "./components/YandexMap";
 import type { RiskLevel, Vehicle } from "./types";
+
+function mapTelemetryToVehicle(payload: {
+  unitId: number;
+  latitude: number;
+  longitude: number;
+  speed: number;
+}): Vehicle {
+  const speedKmh = Math.max(0, Math.round((Number(payload.speed) || 0) * 3.6));
+
+  return {
+    id: String(payload.unitId),
+    route: "LIVE",
+    lat: Number(payload.latitude),
+    lon: Number(payload.longitude),
+    speed: speedKmh,
+    delayMinutes: 0,
+    risk: speedKmh < 10 ? "high" : speedKmh < 20 ? "medium" : "low",
+    reason:
+      speedKmh < 10
+        ? "Снижение скорости в реальном времени"
+        : speedKmh < 20
+          ? "Небольшое отклонение от графика"
+          : "Нормальный режим движения",
+    segment: `Unit ${payload.unitId}`,
+  };
+}
 
 const riskLabel: Record<RiskLevel, string> = {
   low: "Низкий",
@@ -13,16 +39,79 @@ const riskLabel: Record<RiskLevel, string> = {
 function App() {
   const [selected, setSelected] = useState<Vehicle | null>(vehicles[0]);
   const [query, setQuery] = useState("");
+  const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>(vehicles);
+  const [backendConnected, setBackendConnected] = useState(false);
+
+  useEffect(() => {
+    const socket = new WebSocket("ws://localhost:3000/live");
+
+    socket.onopen = () => {
+      setBackendConnected(true);
+    };
+
+    socket.onclose = () => {
+      setBackendConnected(false);
+    };
+
+    socket.onmessage = (event) => {
+      try {
+        const message = JSON.parse(event.data) as {
+          event?: string;
+          payload?: {
+            unitId?: number;
+            latitude?: number;
+            longitude?: number;
+            speed?: number;
+          };
+        };
+
+        if (message.event !== "telemetry" || !message.payload) {
+          return;
+        }
+
+        const nextVehicle = mapTelemetryToVehicle({
+          unitId: Number(message.payload.unitId ?? 0),
+          latitude: Number(message.payload.latitude ?? 0),
+          longitude: Number(message.payload.longitude ?? 0),
+          speed: Number(message.payload.speed ?? 0),
+        });
+
+        if (!Number.isFinite(nextVehicle.lat) || !Number.isFinite(nextVehicle.lon)) {
+          return;
+        }
+
+        setLiveVehicles((current) => {
+          const existingIndex = current.findIndex((vehicle) => vehicle.id === nextVehicle.id);
+
+          if (existingIndex === -1) {
+            return [nextVehicle, ...current].slice(0, 20);
+          }
+
+          const updated = [...current];
+          updated[existingIndex] = { ...updated[existingIndex], ...nextVehicle };
+          return updated;
+        });
+      } catch {
+        // Ignore malformed websocket payloads while the backend stream is warming up.
+      }
+    };
+
+    return () => {
+      socket.close();
+    };
+  }, []);
+
+  const visibleVehicles = backendConnected ? liveVehicles : vehicles;
 
   const filtered = useMemo(
     () =>
-      vehicles.filter((vehicle) =>
+      visibleVehicles.filter((vehicle) =>
         `${vehicle.id} ${vehicle.route}`.toLowerCase().includes(query.toLowerCase())
       ),
-    [query]
+    [query, visibleVehicles]
   );
 
-  const highRisk = vehicles.filter((v) => v.risk === "high").length;
+  const highRisk = visibleVehicles.filter((v) => v.risk === "high").length;
 
   return (
     <main className="app">
@@ -39,17 +128,17 @@ function App() {
       </header>
 
       <section className="stats">
-        <Stat icon={<Bus />} title="ТС в потоке" value={vehicles.length} />
+        <Stat icon={<Bus />} title="ТС в потоке" value={visibleVehicles.length} />
         <Stat icon={<AlertTriangle />} title="Высокий риск" value={highRisk} danger />
         <Stat icon={<Clock3 />} title="Горизонт прогноза" value="10–15 мин" />
-        <Stat icon={<Wifi />} title="Backend" value="Mock" />
+        <Stat icon={<Wifi />} title="Backend" value={backendConnected ? "Live" : "Mock"} />
       </section>
 
       <section className="workspace">
         <div className="map">
           <div className="map-label">ЯНДЕКС КАРТЫ · MOCK DATA</div>
           <YandexMap
-            vehicles={vehicles}
+            vehicles={visibleVehicles}
             selected={selected}
             onSelect={setSelected}
           />
