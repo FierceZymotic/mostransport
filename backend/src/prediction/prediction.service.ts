@@ -11,22 +11,40 @@ import { TripMatcherService } from './trip-matcher.service.js';
 
 export const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
 
-export function normalizeTimestampToFrozenContract(value: Date | number): number {
+export function normalizeTimestampToFrozenContract(
+  value: Date | number,
+): number {
   const timestamp = value instanceof Date ? value.getTime() : Number(value);
 
   if (!Number.isFinite(timestamp)) {
     return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
   }
 
-  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
-  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
   const candidate = new Date(timestamp);
 
+  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
+  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
+
+  // Исторические данные 6 января оставляем как есть.
   if (candidate >= frozenStart && candidate < frozenEnd) {
     return Math.floor(candidate.getTime() / 1000);
   }
 
-  return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
+  // Live/demo: переносим текущую дату на 6 января,
+  // сохраняя время суток.
+  const demoTime = new Date(
+    Date.UTC(
+      2026,
+      0,
+      6,
+      candidate.getUTCHours(),
+      candidate.getUTCMinutes(),
+      candidate.getUTCSeconds(),
+      candidate.getUTCMilliseconds(),
+    ),
+  );
+
+  return Math.floor(demoTime.getTime() / 1000);
 }
 
 export function normalizePredictionTime(input: Date): Date {
@@ -89,11 +107,9 @@ export class PredictionService {
     const latest = vehicleHistory[vehicleHistory.length - 1];
 
     const match = await this.tripMatcher.findTrip(
-      latest.latitude,
-      latest.longitude,
-      String(unitId),
-    );
-
+  latest.latitude,
+  latest.longitude,
+);
     if (!match) {
       throw new Error(
         `Could not determine trip for unit ${unitId}`,
