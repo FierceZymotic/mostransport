@@ -9,6 +9,8 @@ import {
 import { ScheduleRepository } from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
+const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
+
 @Injectable()
 export class PredictionService {
   constructor(
@@ -22,9 +24,10 @@ export class PredictionService {
   async predictForVehicle(
     unitId: number,
   ): Promise<PredictionResponse> {
-    const predictionTime = new Date();
-
-    return this.predictForVehicleAt(unitId, predictionTime);
+    return this.predictForVehicleAt(
+      unitId,
+      DEFAULT_DEMO_PREDICTION_TIME,
+    );
   }
 
   async predictForVehicleAt(
@@ -46,10 +49,10 @@ export class PredictionService {
     const latest = vehicleHistory[vehicleHistory.length - 1];
 
     const match = await this.tripMatcher.findTrip(
-  latest.latitude,
-  latest.longitude,
-  
-);
+      latest.latitude,
+      latest.longitude,
+      String(unitId),
+    );
 
     if (!match) {
       throw new Error(

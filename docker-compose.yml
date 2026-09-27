@@ -28,14 +28,24 @@ services:
       POSTGRES_DB: mostransport
     ports:
       - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d mostransport"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./database/mtr_DB_v2.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ./database/schedule_actions_import_fixed.csv:/docker-entrypoint-initdb.d/data/schedule_actions_import_fixed.csv:ro
+      - ./docker/initdb/02-import-schedule.sh:/docker-entrypoint-initdb.d/02-import-schedule.sh:ro
   backend:
     build:
       context: ./backend
     depends_on:
       ml:
+        condition: service_healthy
+      postgres:
         condition: service_healthy
     ports:
       - "3000:3000" # REST/WebSocket API for frontend
@@ -44,6 +54,7 @@ services:
       PORT: 3000
       TELEMETRY_PORT: 9000
       ML_SERVICE_URL: http://ml:8000
+      DATABASE_URL: postgresql://postgres:postgres@postgres:5432/mostransport?schema=public
 
   frontend:
     build:

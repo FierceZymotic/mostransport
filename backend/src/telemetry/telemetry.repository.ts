@@ -48,40 +48,52 @@ export class TelemetryRepository {
       },
     });
   }
- async findHistory(
-  unitId: number,
-  predictionTime: Date,
-): Promise<VehicleState[]> {
-  const from = new Date(
-    predictionTime.getTime() - 15 * 60 * 1000,
-  );
 
-  const rows = await this.prisma.telemetry.findMany({
-    where: {
-      unit_id: String(unitId),
-      timestamp: {
-        gt: from,
-        lte: predictionTime,
+  async findHistory(
+    unitId: number,
+    predictionTime: Date,
+  ): Promise<VehicleState[]> {
+    const from = new Date(predictionTime.getTime() - 15 * 60 * 1000);
+
+    const rows = await this.prisma.telemetry.findMany({
+      where: {
+        unit_id: String(unitId),
+        timestamp: {
+          lte: predictionTime,
+        },
       },
-    },
-    orderBy: {
-      timestamp: 'asc',
-    },
-  });
+      orderBy: {
+        timestamp: 'asc',
+      },
+    });
 
-  return rows.map((row) => ({
-    unitId: Number(row.unit_id),
-    timestamp: Math.floor(row.timestamp.getTime() / 1000),
-    longitude: row.longitude,
-    latitude: row.latitude,
-    locationValid: row.location_valid,
-    speed: row.speed ?? 0,
-    speedMax: row.speed_max ?? 0,
-    course: row.course ?? 0,
-    track: row.track ?? 0,
-    altitude: row.altitude ?? 0,
-    nsat: row.nsat ?? 0,
-    pdop: row.pdop ?? 0,
-  }));
-}
+    const recentRows = rows.filter((row) => row.timestamp >= from);
+    const lastPacket = rows.at(-1);
+    const lastValidGps = [...rows].reverse().find(
+      (row) => row.location_valid && row.longitude != null && row.latitude != null,
+    );
+
+    const deduped = new Map<number, (typeof rows)[number]>();
+
+    for (const row of [...recentRows, ...(lastPacket ? [lastPacket] : []), ...(lastValidGps ? [lastValidGps] : [])]) {
+      deduped.set(row.timestamp.getTime(), row);
+    }
+
+    return [...deduped.values()]
+      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
+      .map((row) => ({
+        unitId: Number(row.unit_id),
+        timestamp: Math.floor(row.timestamp.getTime() / 1000),
+        longitude: row.longitude,
+        latitude: row.latitude,
+        locationValid: row.location_valid,
+        speed: row.speed ?? 0,
+        speedMax: row.speed_max ?? 0,
+        course: row.course ?? 0,
+        track: row.track ?? 0,
+        altitude: row.altitude ?? 0,
+        nsat: row.nsat ?? 0,
+        pdop: row.pdop ?? 0,
+      }));
+  }
 }
