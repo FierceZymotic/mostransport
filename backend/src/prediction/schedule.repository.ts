@@ -75,6 +75,35 @@ export function resolveTargetActionFromRows(
   return classifyTargetActions(rows, predictionTime).action;
 }
 
+export type CurrentDeviationStatus = 'confirmed_fact' | 'no_fact_before_t' | 'unavailable_no_fact_source';
+
+export interface CurrentDeviation {
+  /** Contract v1 scalar (P1 semantics; 0 when no fact exists or no source is available). */
+  seconds: number;
+  /** Distinguishes a known value (incl. a known "no fact yet" 0) from an unavailable input. */
+  status: CurrentDeviationStatus;
+}
+
+export const DEGRADED_CURRENT_DEVIATION_REASON = 'degraded:current_deviation_unavailable(no_fact_source)';
+
+/**
+ * Where factual passage times come from. No runtime component writes
+ * schedule_actions.time_fact_begin (the DB seed inserts NULL), so the default is 'none':
+ * the scalar sent is the Contract-compatible 0, flagged UNAVAILABLE rather than presented
+ * as a confirmed "on time". 'replay_import' = organizer TRAIN-day facts were explicitly
+ * imported for a historical replay (scripts/import_db_seed.py --replay-facts); it is never
+ * a live fact source.
+ */
+export type ScheduleFactSource = 'none' | 'replay_import';
+
+export function scheduleFactSourceFromEnv(env: Record<string, string | undefined> = process.env): ScheduleFactSource {
+  const value = (env.SCHEDULE_FACT_SOURCE ?? 'none').trim().toLowerCase();
+  if (value !== 'none' && value !== 'replay_import') {
+    throw new Error(`Unsupported SCHEDULE_FACT_SOURCE=${value}; expected "none" or "replay_import"`);
+  }
+  return value;
+}
+
 export function resolveCurrentDeviationFromRows(
   rows: ScheduleFactRow[],
   predictionTime: Date,
@@ -145,7 +174,11 @@ export class ScheduleRepository {
   async getCurrentDeviation(
     trId: string,
     predictionTime: Date,
-  ): Promise<number> {
+    factSource: ScheduleFactSource = scheduleFactSourceFromEnv(),
+  ): Promise<CurrentDeviation> {
+    if (factSource === 'none') {
+      return { seconds: 0, status: 'unavailable_no_fact_source' };
+    }
     const rows = await this.prisma.$queryRaw<ScheduleFactRow[]>(
       Prisma.sql`
         SELECT
@@ -161,6 +194,10 @@ export class ScheduleRepository {
       `,
     );
 
-    return resolveCurrentDeviationFromRows(rows, predictionTime);
+    const hasFact = rows.some((row) => row.time_fact_begin && new Date(row.time_fact_begin) <= predictionTime);
+    return {
+      seconds: resolveCurrentDeviationFromRows(rows, predictionTime),
+      status: hasFact ? 'confirmed_fact' : 'no_fact_before_t',
+    };
   }
 }

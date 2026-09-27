@@ -67,15 +67,17 @@ export class LivePredictionService
     this.inFlight.add(state.unitId);
 
     try {
-      const prediction =
-        await this.predictionService.predictForVehicleAt(
+      const { response: prediction, currentDeviationStatus } =
+        await this.predictionService.predictWithStatus(
           state.unitId,
           new Date(state.timestamp * 1000),
         );
 
       this.lastPredictionAt.set(state.unitId, now);
 
-      this.stream.publishPrediction(prediction);
+      this.stream.publishPrediction(prediction, {
+        current_deviation_status: currentDeviationStatus,
+      });
 
       this.logger.log(
         `Live prediction: unit=${state.unitId}, delay=${prediction.prediction.delay_seconds}s`,

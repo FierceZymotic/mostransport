@@ -7,7 +7,28 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
+from mostransport_ml.data.safe_deviation import safe_current_deviation_seconds
+
 FIXTURE = json.loads((Path(__file__).parent / "fixtures" / "backend_ml_conformance.json").read_text())
+
+
+def _naive(ts: str) -> pd.Timestamp:
+    return pd.Timestamp(ts).tz_convert("UTC").tz_localize(None)
+
+
+@pytest.mark.parametrize("case", FIXTURE["current_deviation"], ids=lambda c: c["name"])
+def test_p1_safe_deviation_matches_shared_fixture(case):
+    facts = pd.DataFrame(
+        {
+            "tr_id": ["X"] * len(case["rows"]),
+            "tt_action_item_id": [r["id"] for r in case["rows"]],
+            "time_begin": [_naive(r["plan"]) for r in case["rows"]],
+            "time_fact_begin": [None if r["fact"] is None else _naive(r["fact"]) for r in case["rows"]],
+        }
+    )
+    facts["time_fact_begin"] = pd.to_datetime(facts["time_fact_begin"])
+    points = pd.DataFrame({"sample_id": ["p"], "tr_id": ["X"], "T": [_naive(case["T"])]})
+    assert safe_current_deviation_seconds(points, facts).iloc[0] == case["expected_seconds"]
 
 
 def classify_target_actions(rows: list[dict], prediction_time: pd.Timestamp) -> tuple[str, str | None]:

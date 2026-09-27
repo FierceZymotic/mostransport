@@ -10,12 +10,13 @@ const packet = (unitId: number, timestamp: number, locationValid = true): Vehicl
 });
 
 function setup(predict: (unitId: number, at: Date) => Promise<any>) {
+  const outcome = async (unitId: number, at: Date) => ({ response: await predict(unitId, at), currentDeviationStatus: 'unavailable_no_fact_source' });
   let subscriber: (state: VehicleState) => void = () => undefined;
   const stream = {
     subscribeState: vi.fn((fn: (state: VehicleState) => void) => { subscriber = fn; return () => undefined; }),
     publishPrediction: vi.fn(),
   };
-  const predictionService = { predictForVehicleAt: vi.fn(predict) };
+  const predictionService = { predictWithStatus: vi.fn(outcome) };
   const live = new LivePredictionService(stream as any, predictionService as any);
   live.onModuleInit();
   const send = async (state: VehicleState) => {
@@ -30,8 +31,8 @@ describe('LivePredictionService', () => {
     const response = { request_id: 'r', prediction: { delay_seconds: 30 } };
     const { stream, predictionService, send } = setup(async () => response);
     await send(packet(1105498, 1767700000));
-    expect(predictionService.predictForVehicleAt).toHaveBeenCalledWith(1105498, new Date(1767700000 * 1000));
-    expect(stream.publishPrediction).toHaveBeenCalledTimes(1);
+    expect(predictionService.predictWithStatus).toHaveBeenCalledWith(1105498, new Date(1767700000 * 1000));
+    expect(stream.publishPrediction).toHaveBeenCalledWith(response, { current_deviation_status: 'unavailable_no_fact_source' });
   });
 
   it('logs and skips an ineligible point (e.g. ambiguous target) for the cycle without publishing or crashing', async () => {
@@ -41,7 +42,7 @@ describe('LivePredictionService', () => {
     await send(packet(7, 1767700000));
     await send(packet(7, 1767700005)); // same 60 s cycle: not retried
     await send(packet(7, 1767700061)); // next cycle: tried again
-    expect(predictionService.predictForVehicleAt).toHaveBeenCalledTimes(2);
+    expect(predictionService.predictWithStatus).toHaveBeenCalledTimes(2);
     expect(stream.publishPrediction).not.toHaveBeenCalled();
   });
 
@@ -55,7 +56,7 @@ describe('LivePredictionService', () => {
     await send(packet(7, 1767700000));
     await send(packet(7, 1767700003, false)); // invalid GPS never triggers a prediction
     await send(packet(7, 1767700005));
-    expect(predictionService.predictForVehicleAt).toHaveBeenCalledTimes(2);
+    expect(predictionService.predictWithStatus).toHaveBeenCalledTimes(2);
     expect(stream.publishPrediction).toHaveBeenCalledTimes(1);
   });
 });

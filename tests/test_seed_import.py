@@ -70,6 +70,34 @@ def test_vehicle_identity_refuses_ambiguous_mapping(seed, tmp_path):
     assert conn.log == []
 
 
+def test_replay_facts_skip_missing_and_are_explicit_utc(seed, tmp_path):
+    csv = tmp_path / "train" / "schedule.csv"
+    csv.parent.mkdir()
+    csv.write_text("tt_action_item_id,tr_id,time_fact_begin\n10,1,2026-01-06 03:00:05\n11,1,\n")
+    conn = _Conn()
+    assert seed.import_replay_facts(conn, csv) == 1
+    (sql, (when, action_id)), = conn.log
+    assert sql.startswith("UPDATE schedule_actions SET time_fact_begin")
+    assert action_id == "10"
+    assert when.tzinfo is not None and when.utcoffset() == timezone.utc.utcoffset(None)
+    assert when.isoformat() == "2026-01-06T03:00:05+00:00"
+    # idempotent: the same statements again
+    again = _Conn()
+    seed.import_replay_facts(again, csv)
+    assert again.log == conn.log
+
+
+@pytest.mark.parametrize("split", ["test", "validate"])
+def test_replay_facts_refuse_test_and_validate_splits(seed, tmp_path, split):
+    csv = tmp_path / split / "schedule.csv"
+    csv.parent.mkdir()
+    csv.write_text("tt_action_item_id,tr_id,time_fact_begin\n10,1,2026-01-06 03:00:05\n")
+    conn = _Conn()
+    with pytest.raises(SystemExit):
+        seed.import_replay_facts(conn, csv)
+    assert conn.log == []
+
+
 def test_plan_and_telemetry_times_are_bound_as_aware_utc(seed):
     # The same instants as the frozen contract (naive organizer time == UTC), independent of
     # the database session TimeZone.

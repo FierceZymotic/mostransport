@@ -7,7 +7,11 @@ import {
   PredictionRequest,
   PredictionResponse,
 } from './ml/ml.types.js';
-import { ScheduleRepository } from './schedule.repository.js';
+import {
+  CurrentDeviationStatus,
+  DEGRADED_CURRENT_DEVIATION_REASON,
+  ScheduleRepository,
+} from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
 export class InvalidPredictionTimeError extends BadRequestException {}
@@ -38,6 +42,12 @@ export function requirePredictionTime(input: Date): Date {
   return value;
 }
 
+/** ML response plus Backend-side input provenance that Contract v1 cannot carry. */
+export interface PredictionOutcome {
+  response: PredictionResponse;
+  currentDeviationStatus: CurrentDeviationStatus;
+}
+
 @Injectable()
 export class PredictionService {
   constructor(
@@ -62,6 +72,13 @@ export class PredictionService {
     unitId: number,
     predictionTime: Date,
   ): Promise<PredictionResponse> {
+    return (await this.predictWithStatus(unitId, predictionTime)).response;
+  }
+
+  async predictWithStatus(
+    unitId: number,
+    predictionTime: Date,
+  ): Promise<PredictionOutcome> {
     const normalizedPredictionTime = requirePredictionTime(predictionTime);
 
     const vehicleHistory =
@@ -116,6 +133,13 @@ export class PredictionService {
       );
     }
 
+    // P1 semantics. Without a fact source the Contract v1 scalar is 0 and the status says
+    // "unavailable"; it is never presented as a confirmed on-time value.
+    const deviation = await this.scheduleRepository.getCurrentDeviation(
+      match.trId,
+      normalizedPredictionTime,
+    );
+
     const request: PredictionRequest = {
       request_id: crypto.randomUUID(),
 
@@ -138,11 +162,7 @@ export class PredictionService {
         target_lat: targetAction.target_lat,
         target_lon: targetAction.target_lon,
 
-        current_deviation_seconds:
-  await this.scheduleRepository.getCurrentDeviation(
-    match.trId,
-    normalizedPredictionTime,
-  ),
+        current_deviation_seconds: deviation.seconds,
 
         manual_fill: targetAction.manual_fill,
       },
@@ -185,14 +205,17 @@ await this.prisma.predictions.create({
     status: response.status,
     delay_seconds: response.prediction.delay_seconds,
     target_time: new Date(response.prediction.target_time),
-    reason: response.prediction.reason,
+    // Degraded-mode marker (additive; Contract v1 unchanged): the model input
+    // current_deviation_seconds was not backed by any fact source.
+    reason: response.prediction.reason
+      ?? (deviation.status === 'unavailable_no_fact_source' ? DEGRADED_CURRENT_DEVIATION_REASON : null),
     generated_at: new Date(response.generated_at),
     model_version: response.model_version,
     feature_schema_version: response.feature_schema_version,
   },
 });
 
-return response;
+return { response, currentDeviationStatus: deviation.status };
 
   }
 

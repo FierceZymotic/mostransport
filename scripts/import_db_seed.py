@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -108,6 +109,34 @@ def import_schedule_actions(conn: psycopg.Connection) -> int:
     return inserted
 
 
+def import_replay_facts(conn: psycopg.Connection, schedule_csv: Path) -> int:
+    """HISTORICAL REPLAY ONLY: copy organizer TRAIN-day factual passage times into schedule_actions.
+
+    No runtime component produces factual passage times, and this is not a live fact source.
+    For replaying / parity-testing the organizer's historical train day the organizer
+    schedule file (with time_fact_begin) may be imported explicitly; the Backend reads only
+    facts <= T (P1 semantics) and only when SCHEDULE_FACT_SOURCE=replay_import. Idempotent
+    (plain UPDATE of the same values). Test/validate splits are refused.
+    """
+    if schedule_csv.resolve().parent.name.lower() in {"test", "validate"}:
+        raise SystemExit(f"refusing replay facts from a {schedule_csv.resolve().parent.name} split: {schedule_csv}")
+    digest = hashlib.sha256(schedule_csv.read_bytes()).hexdigest()
+    facts = pd.read_csv(schedule_csv, usecols=["tt_action_item_id", "time_fact_begin"])
+    facts = facts.dropna(subset=["time_fact_begin"])
+    facts["time_fact_begin"] = as_utc(pd.to_datetime(facts["time_fact_begin"]))
+    print(f"replay_facts_source={schedule_csv} sha256={digest} rows_with_fact={len(facts)}")
+    updated = 0
+    with conn.cursor() as cur:
+        for row in facts.itertuples(index=False):
+            cur.execute(
+                "UPDATE schedule_actions SET time_fact_begin = %s WHERE tt_action_item_id = %s",
+                (row.time_fact_begin.to_pydatetime(), str(row.tt_action_item_id)),
+            )
+            updated += cur.rowcount
+    conn.commit()
+    return updated
+
+
 def import_vehicle_identity(conn: psycopg.Connection, traffic_csv: Path) -> int:
     """unit_id -> current_tr_id from organizer telemetry (1:1 in the supplied data).
 
@@ -135,6 +164,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--vehicles-from-traffic", type=Path, default=None,
                         help="organizer traffic CSV: populate vehicles(unit_id -> current_tr_id)")
+    parser.add_argument("--replay-facts", type=Path, default=None,
+                        help="organizer TRAIN schedule CSV with time_fact_begin (historical replay only; "
+                             "run the Backend with SCHEDULE_FACT_SOURCE=replay_import)")
     args = parser.parse_args()
     with psycopg.connect(DB_URL) as conn:
         ensure_schema(conn)
@@ -142,6 +174,8 @@ def main() -> None:
         schedule_inserted = import_schedule_actions(conn)
         if args.vehicles_from_traffic is not None:
             print("vehicles_upserted=", import_vehicle_identity(conn, args.vehicles_from_traffic))
+        if args.replay_facts is not None:
+            print("replay_facts_updated=", import_replay_facts(conn, args.replay_facts))
 
         with conn.cursor() as cur:
             print("telemetry_rows=", cur.execute("SELECT COUNT(*) FROM telemetry").fetchone()[0])
