@@ -154,8 +154,11 @@ h2 { margin: 0; font-size: 18px; }
 .incident-rows { margin-top: 12px; }
 .incident-row strong { font-size: 12px; }
 
-.reason.degraded { color: #f5c451; }
-.reason.none, .reason.unknown { color: #7e8998; }
+/* degraded = successful prediction with reduced inputs: amber warning, not a red error */
+.reason.warning { background: #2a2414; border: 1px solid #5c4a1d; color: #f5c451; }
+.reason.warning span { color: #c9a553; }
+.reason.warning strong { color: #f5cf68; }
+.reason.neutral { color: #7e8998; }
 
 .freshness { display: flex; justify-content: space-between; gap: 10px; margin-top: 12px; color: #6e7a89; font-size: 10px; }
 

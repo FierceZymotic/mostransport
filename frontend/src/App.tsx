@@ -13,6 +13,7 @@ import {
   type DashboardState,
   type PredictionEventDetails,
   type PredictionEventPayload,
+  reasonPresentation,
   type SummaryVehicle,
   type TelemetryPayload,
   type VehicleView,
@@ -272,6 +273,7 @@ function App() {
 }
 
 function VehicleCard({ vehicle }: { vehicle: VehicleView }) {
+  const reason = vehicle.reason ? reasonPresentation(vehicle.reason) : null;
   return (
     <div className={`incident risk-${vehicle.risk}`}>
       <div className="incident-title">
@@ -301,12 +303,12 @@ function VehicleCard({ vehicle }: { vehicle: VehicleView }) {
         </div>
       </div>
 
-      {vehicle.reason && (
-        <div className={`reason ${vehicle.reason.kind}`}>
+      {reason && (
+        <div className={`reason ${reason.tone}`}>
           <AlertTriangle size={18} />
           <div>
             <span>Причина</span>
-            <strong title={vehicle.reason.raw ?? undefined}>{vehicle.reason.text}</strong>
+            <strong title={reason.tooltip}>{reason.text}</strong>
           </div>
         </div>
       )}

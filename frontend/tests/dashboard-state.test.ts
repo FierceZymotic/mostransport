@@ -11,6 +11,7 @@ import {
   latestPredictionByUnitId,
   mergeAlerts,
   normalizeSpeedKmh,
+  reasonPresentation,
   riskLevelForDelay,
   riskOf,
   seedFromSummary,
@@ -117,6 +118,18 @@ describe("reason translation", () => {
     assert.equal(displayReason("some_server_error").kind, "unknown");
     assert.notEqual(displayReason("some_server_error").text, "Недостаточно фактических данных по графику");
     assert.equal(displayReason(null).kind, "none");
+  });
+
+  it("the card never shows the raw degraded reason as its text: mapped text, amber warning, raw kept for the tooltip", () => {
+    const state = mergeAlerts({}, [alert("d", "1003", 11, "2026-09-27T10:00:00.000Z")]);
+    const view = toVehicleView(state["1003"]);
+    const shown = reasonPresentation(view.reason!); // exactly what VehicleCard renders
+    assert.equal(shown.text, "Недостаточно фактических данных по графику");
+    assert.ok(!shown.text.includes("degraded:"));
+    assert.equal(shown.tone, "warning");
+    assert.equal(shown.tooltip, DEGRADED);
+    assert.equal(state["1003"].prediction?.reason, DEGRADED); // raw backend reason preserved in state
+    assert.equal(reasonPresentation(displayReason(null)).tone, "neutral");
   });
 
   it("a degraded prediction is still shown as a prediction", () => {

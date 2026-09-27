@@ -256,6 +256,19 @@ export function displayReason(raw: string | null): ReasonDisplay {
   return { kind: "unknown", text: "Причина не расшифрована", raw };
 }
 
+export interface ReasonPresentation {
+  text: string;
+  /** Raw backend reason, for a diagnostics tooltip only. */
+  tooltip: string | undefined;
+  /** "warning" = successful prediction with reduced inputs (degraded), never an error state. */
+  tone: "warning" | "neutral";
+}
+
+/** What the card renders for a prediction reason: the mapped text, never the raw backend string. */
+export function reasonPresentation(reason: ReasonDisplay): ReasonPresentation {
+  return { text: reason.text, tooltip: reason.raw ?? undefined, tone: reason.kind === "degraded" ? "warning" : "neutral" };
+}
+
 /**
  * Canonical risk = organizer delay classes (dataset README §3, target_class: early / ontime / late,
  * thresholds -60 s / +120 s) applied to the latest predicted delay. late -> high, early -> medium,
