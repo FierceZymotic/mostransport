@@ -1,142 +1,127 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertTriangle, Bus, Clock3, Radio, Search, Wifi } from "lucide-react";
 import YandexMap from "./components/YandexMap";
-import type { RiskLevel, Vehicle } from "./types";
+import {
+  applyTelemetry,
+  compareVehicleViews,
+  formatAge,
+  mergeAlerts,
+  predictionEventDetails,
+  seedFromSummary,
+  toVehicleView,
+  type AlertRow,
+  type DashboardState,
+  type PredictionEventDetails,
+  type PredictionEventPayload,
+  reasonPresentation,
+  type SummaryVehicle,
+  type TelemetryPayload,
+  type VehicleView,
+} from "./dashboard/state";
 
-function mapTelemetryToVehicle(payload: {
-  unitId: number;
-  latitude: number;
-  longitude: number;
-  speed: number;
-}): Vehicle {
-  const speedKmh = Math.max(0, Math.round((Number(payload.speed) || 0) * 3.6));
-
-  return {
-    id: String(payload.unitId),
-    route: "LIVE",
-    lat: Number(payload.latitude),
-    lon: Number(payload.longitude),
-    speed: speedKmh,
-    delayMinutes: 0,
-    risk: speedKmh < 10 ? "high" : speedKmh < 20 ? "medium" : "low",
-    reason:
-      speedKmh < 10
-        ? "Снижение скорости в реальном времени"
-        : speedKmh < 20
-          ? "Небольшое отклонение от графика"
-          : "Нормальный режим движения",
-    segment: `Unit ${payload.unitId}`,
-  };
-}
-
-const riskLabel: Record<RiskLevel, string> = {
-  low: "Низкий",
-  medium: "Средний",
-  high: "Высокий",
-};
-
-type DashboardSummaryResponse = {
-  total: number;
-  highRisk: number;
-  mediumRisk: number;
-  lowRisk: number;
-  vehicles: {
-    id: string;
-    route: string;
-    lat: number;
-    lon: number;
-    speed: number;
-    delayMinutes: number;
-    risk: RiskLevel;
-    reason: string;
-    segment: string;
-    updatedAt?: string;
-  }[];
-};
+const API_BASE = "http://localhost:3000";
+const SUMMARY_URL = `${API_BASE}/prediction/dashboard/summary`;
+const ALERTS_URL = `${API_BASE}/prediction/dashboard/alerts`;
+const LIVE_URL = "ws://localhost:3000/live";
+const MAX_PENDING_DETAILS = 200;
 
 function App() {
-  const [selected, setSelected] = useState<Vehicle | null>(null);
+  const [units, setUnits] = useState<DashboardState>({});
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [query, setQuery] = useState("");
-  const [liveVehicles, setLiveVehicles] = useState<Vehicle[]>([]);
-  const [dashboardVehicles, setDashboardVehicles] = useState<Vehicle[]>([]);
   const [liveConnected, setLiveConnected] = useState(false);
   const [dashboardConnected, setDashboardConnected] = useState(false);
+  // WS-only prediction details by request_id, until the alerts row names the unit.
+  const eventDetails = useRef<Record<string, PredictionEventDetails>>({});
+  const refreshAlerts = useRef<() => void>(() => undefined);
 
+  // Initial positions / speed (telemetry-owned fields only) from the last-state summary.
   useEffect(() => {
     let cancelled = false;
     let retryTimer: number | undefined;
 
-    const loadDashboard = () => {
-      fetch("http://localhost:3000/prediction/dashboard/summary")
+    const loadSummary = () => {
+      fetch(SUMMARY_URL)
         .then(async (response) => {
           if (!response.ok) {
             throw new Error(`HTTP ${response.status}`);
           }
-
-          const payload = (await response.json()) as DashboardSummaryResponse;
-
+          const payload = (await response.json()) as { vehicles?: SummaryVehicle[] };
           if (cancelled) {
             return;
           }
-
           if (Array.isArray(payload.vehicles)) {
-            const normalized = payload.vehicles.map((vehicle) => ({
-              ...vehicle,
-              speed: Number(vehicle.speed ?? 0),
-              lat: Number(vehicle.lat ?? 0),
-              lon: Number(vehicle.lon ?? 0),
-              delayMinutes: Number(vehicle.delayMinutes ?? 0),
-            }));
-
-            setDashboardVehicles(normalized);
-            setDashboardConnected(true);
-
-            if (!selected) {
-              setSelected(normalized[0] ?? null);
-            }
+            setUnits((current) => seedFromSummary(current, payload.vehicles ?? []));
           }
+          setDashboardConnected(true);
         })
         .catch(() => {
           if (cancelled) {
             return;
           }
-
           setDashboardConnected(false);
-          retryTimer = window.setTimeout(loadDashboard, 4000);
+          retryTimer = window.setTimeout(loadSummary, 4000);
         });
     };
 
-    loadDashboard();
+    loadSummary();
 
     return () => {
       cancelled = true;
-      if (retryTimer) {
-        window.clearTimeout(retryTimer);
-      }
+      window.clearTimeout(retryTimer);
     };
-  }, [selected]);
+  }, []);
 
+  // Prediction history: seeds the latest prediction per unit; re-read on every WS prediction.
   useEffect(() => {
-    const baseList = liveConnected ? liveVehicles : dashboardConnected ? dashboardVehicles : [];
-    if (!baseList.length) {
-      setSelected(null);
-      return;
-    }
+    let cancelled = false;
+    let retryTimer: number | undefined;
+    let debounceTimer: number | undefined;
 
-    setSelected((current) => current && baseList.some((vehicle) => vehicle.id === current.id)
-      ? current
-      : baseList[0]);
-  }, [liveConnected, dashboardConnected, liveVehicles, dashboardVehicles]);
+    const loadAlerts = () => {
+      fetch(ALERTS_URL)
+        .then(async (response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          const rows = (await response.json()) as AlertRow[];
+          if (!cancelled && Array.isArray(rows)) {
+            setUnits((current) => mergeAlerts(current, rows, eventDetails.current));
+          }
+        })
+        .catch(() => {
+          if (!cancelled) {
+            window.clearTimeout(retryTimer);
+            retryTimer = window.setTimeout(loadAlerts, 4000);
+          }
+        });
+    };
+
+    refreshAlerts.current = () => {
+      window.clearTimeout(debounceTimer);
+      debounceTimer = window.setTimeout(loadAlerts, 250);
+    };
+    loadAlerts();
+
+    return () => {
+      cancelled = true;
+      refreshAlerts.current = () => undefined;
+      window.clearTimeout(retryTimer);
+      window.clearTimeout(debounceTimer);
+    };
+  }, []);
 
   useEffect(() => {
     let socket: WebSocket | null = null;
     let reconnectTimer: number | undefined;
+    let closed = false;
 
     const connectSocket = () => {
-      socket = new WebSocket("ws://localhost:3000/live");
+      socket = new WebSocket(LIVE_URL);
 
       socket.onopen = () => {
         setLiveConnected(true);
+        refreshAlerts.current(); // predictions made while disconnected
       };
 
       socket.onerror = () => {
@@ -145,52 +130,34 @@ function App() {
 
       socket.onclose = () => {
         setLiveConnected(false);
-        if (reconnectTimer) {
-          window.clearTimeout(reconnectTimer);
+        if (closed) {
+          return;
         }
+        window.clearTimeout(reconnectTimer);
         reconnectTimer = window.setTimeout(connectSocket, 2500);
       };
 
       socket.onmessage = (event) => {
+        let message: { event?: string; payload?: unknown; meta?: unknown };
         try {
-          const message = JSON.parse(event.data) as {
-            event?: string;
-            payload?: {
-              unitId?: number;
-              latitude?: number;
-              longitude?: number;
-              speed?: number;
-            };
-          };
-
-          if (message.event !== "telemetry" || !message.payload) {
-            return;
-          }
-
-          const nextVehicle = mapTelemetryToVehicle({
-            unitId: Number(message.payload.unitId ?? 0),
-            latitude: Number(message.payload.latitude ?? 0),
-            longitude: Number(message.payload.longitude ?? 0),
-            speed: Number(message.payload.speed ?? 0),
-          });
-
-          if (!Number.isFinite(nextVehicle.lat) || !Number.isFinite(nextVehicle.lon)) {
-            return;
-          }
-
-          setLiveVehicles((current) => {
-            const existingIndex = current.findIndex((vehicle) => vehicle.id === nextVehicle.id);
-
-            if (existingIndex === -1) {
-              return [nextVehicle, ...current].slice(0, 20);
-            }
-
-            const updated = [...current];
-            updated[existingIndex] = { ...updated[existingIndex], ...nextVehicle };
-            return updated;
-          });
+          message = JSON.parse(event.data);
         } catch {
-          // Ignore malformed websocket payloads while the backend stream is warming up.
+          return; // ignore malformed payloads while the backend stream is warming up
+        }
+        if (message.event === "telemetry" && message.payload) {
+          const payload = message.payload as TelemetryPayload;
+          setUnits((current) => applyTelemetry(current, payload, Date.now()));
+        } else if (message.event === "prediction" && message.payload) {
+          const payload = message.payload as PredictionEventPayload;
+          if (payload.request_id) {
+            const details = eventDetails.current;
+            details[payload.request_id] = predictionEventDetails(payload, message.meta);
+            const keys = Object.keys(details);
+            for (const key of keys.slice(0, Math.max(0, keys.length - MAX_PENDING_DETAILS))) {
+              delete details[key];
+            }
+          }
+          refreshAlerts.current();
         }
       };
     };
@@ -198,30 +165,30 @@ function App() {
     connectSocket();
 
     return () => {
-      if (reconnectTimer) {
-        window.clearTimeout(reconnectTimer);
-      }
+      closed = true;
+      window.clearTimeout(reconnectTimer);
       socket?.close();
     };
   }, []);
 
-  const visibleVehicles = liveConnected
-    ? liveVehicles
-    : dashboardConnected
-      ? dashboardVehicles
-      : [];
+  const vehicles = useMemo(
+    () => Object.values(units).map(toVehicleView).sort(compareVehicleViews),
+    [units]
+  );
+  const mapVehicles = useMemo(() => vehicles.filter((vehicle) => vehicle.hasPosition), [vehicles]);
+  const selected = selectedId ? vehicles.find((vehicle) => vehicle.id === selectedId) ?? null : null;
 
   const sourceLabel = liveConnected ? "ЯНДЕКС КАРТЫ · LIVE DATA" : dashboardConnected ? "ЯНДЕКС КАРТЫ · DASHBOARD DATA" : "ЯНДЕКС КАРТЫ · WAITING FOR DATA";
 
   const filtered = useMemo(
     () =>
-      visibleVehicles.filter((vehicle) =>
+      vehicles.filter((vehicle) =>
         `${vehicle.id} ${vehicle.route}`.toLowerCase().includes(query.toLowerCase())
       ),
-    [query, visibleVehicles]
+    [query, vehicles]
   );
 
-  const highRisk = visibleVehicles.filter((v) => v.risk === "high").length;
+  const highRisk = vehicles.filter((v) => v.risk === "high").length;
 
   return (
     <main className="app">
@@ -230,15 +197,15 @@ function App() {
           <div className="eyebrow">МОСКОВСКИЙ ТРАНСПОРТ · REAL-TIME</div>
           <h1>Мониторинг движения</h1>
         </div>
-        <div className="live">
+        <div className={`live ${liveConnected ? "" : "offline"}`}>
           <span className="live-dot" />
           <Radio size={17} />
-          Поток данных активен
+          {liveConnected ? "Поток данных активен" : "Поток данных недоступен"}
         </div>
       </header>
 
       <section className="stats">
-        <Stat icon={<Bus />} title="ТС в потоке" value={visibleVehicles.length} />
+        <Stat icon={<Bus />} title="ТС в потоке" value={vehicles.length} />
         <Stat icon={<AlertTriangle />} title="Высокий риск" value={highRisk} danger />
         <Stat icon={<Clock3 />} title="Горизонт прогноза" value="10–15 мин" />
         <Stat icon={<Wifi />} title="Backend" value={liveConnected ? "Live" : dashboardConnected ? "Dashboard" : "Waiting"} />
@@ -247,11 +214,11 @@ function App() {
       <section className="workspace">
         <div className="map">
           <div className="map-label">{sourceLabel}</div>
-          {visibleVehicles.length ? (
+          {mapVehicles.length ? (
             <YandexMap
-              vehicles={visibleVehicles}
+              vehicles={mapVehicles}
               selected={selected}
-              onSelect={setSelected}
+              onSelect={(vehicle) => setSelectedId(vehicle.id)}
             />
           ) : (
             <div className="empty-state">Ожидание live-данных от backend…</div>
@@ -278,60 +245,101 @@ function App() {
             {filtered.map((vehicle) => (
               <button
                 key={vehicle.id}
-                className={`vehicle-card ${selected?.id === vehicle.id ? "active" : ""}`}
-                onClick={() => setSelected(vehicle)}
+                className={`vehicle-card risk-${vehicle.risk} ${selectedId === vehicle.id ? "active" : ""}`}
+                onClick={() => setSelectedId(vehicle.id)}
               >
                 <div className={`risk-dot ${vehicle.risk}`} />
                 <div className="vehicle-main">
-                  <strong>{vehicle.id}</strong>
-                  <span>Маршрут {vehicle.route}</span>
-                </div>
-                <div className="delay">
-                  {vehicle.delayMinutes ? `+${vehicle.delayMinutes} мин` : "По графику"}
+                  <strong>{vehicle.id} · {vehicle.route}</strong>
+                  <span className={`vehicle-status ${vehicle.risk}`}>
+                    {vehicle.status}
+                    {vehicle.risk === "low" ? ` · ${vehicle.delayText}` : ""}
+                  </span>
                 </div>
               </button>
             ))}
           </div>
 
-          {selected && (
-            <div className="incident">
-              <div className="incident-title">
-                <div>
-                  <span className="eyebrow">КАРТОЧКА ИНЦИДЕНТА</span>
-                  <h2>{selected.id}</h2>
-                </div>
-                <span className={`badge ${selected.risk}`}>{riskLabel[selected.risk]}</span>
-              </div>
-
-              <div className="incident-row">
-                <span>Маршрут</span>
-                <strong>{selected.route}</strong>
-              </div>
-              <div className="incident-row">
-                <span>Прогноз</span>
-                <strong>+{selected.delayMinutes} мин</strong>
-              </div>
-              <div className="incident-row">
-                <span>Скорость</span>
-                <strong>{selected.speed} км/ч</strong>
-              </div>
-              <div className="incident-row">
-                <span>Участок</span>
-                <strong>{selected.segment}</strong>
-              </div>
-
-              <div className="reason">
-                <AlertTriangle size={18} />
-                <div>
-                  <span>Предполагаемая причина</span>
-                  <strong>{selected.reason}</strong>
-                </div>
-              </div>
+          {selected ? <VehicleCard vehicle={selected} /> : (
+            <div className="incident incident-empty">
+              <span className="eyebrow">КАРТОЧКА ИНЦИДЕНТА</span>
+              <p>Выберите ТС на карте или в списке</p>
             </div>
           )}
         </aside>
       </section>
     </main>
+  );
+}
+
+function VehicleCard({ vehicle }: { vehicle: VehicleView }) {
+  const reason = vehicle.reason ? reasonPresentation(vehicle.reason) : null;
+  return (
+    <div className={`incident risk-${vehicle.risk}`}>
+      <div className="incident-title">
+        <div>
+          <span className="eyebrow">КАРТОЧКА ИНЦИДЕНТА</span>
+          <h2>{vehicle.id} · {vehicle.route}</h2>
+        </div>
+      </div>
+
+      <span className={`badge ${vehicle.risk}`}>
+        <span className={`risk-dot ${vehicle.risk}`} />
+        {vehicle.riskLabel}
+      </span>
+
+      <div className="incident-rows">
+        <div className="incident-row">
+          <span>Прогноз</span>
+          <strong>{vehicle.delayText}</strong>
+        </div>
+        <div className="incident-row">
+          <span>Скорость</span>
+          <strong>{vehicle.speedText}</strong>
+        </div>
+        <div className="incident-row">
+          <span>Участок</span>
+          <strong>{vehicle.sectionText}</strong>
+        </div>
+      </div>
+
+      {reason && (
+        <div className={`reason ${reason.tone}`}>
+          <AlertTriangle size={18} />
+          <div>
+            <span>Причина</span>
+            <strong title={reason.tooltip}>{reason.text}</strong>
+          </div>
+        </div>
+      )}
+
+      <Freshness vehicle={vehicle} />
+    </div>
+  );
+}
+
+/**
+ * Telemetry event times are backend model time (the demo clock may shift them by whole days),
+ * so telemetry age is measured from when this dashboard received the last live packet.
+ * Prediction age uses the ML generation time (UTC wall clock).
+ */
+function Freshness({ vehicle }: { vehicle: VehicleView }) {
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const telemetry = vehicle.telemetryReceivedAt !== null
+    ? formatAge(vehicle.telemetryReceivedAt, now)
+    : vehicle.telemetrySeedOnly ? "нет live-данных" : "нет данных";
+
+  return (
+    <div className="freshness">
+      <span>Телеметрия: {telemetry}</span>
+      <span>Прогноз: {formatAge(vehicle.predictionGeneratedAt, now)}</span>
+    </div>
   );
 }
 

@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "node --test tests/dashboard-state.test.ts"
   },
   "dependencies": {
     "@vitejs/plugin-react": "^5.0.0",
