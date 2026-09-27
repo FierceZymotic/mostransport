@@ -55,9 +55,12 @@ export class NdtpPacketExtractor {
 
     const raw = this.buffer.subarray(0, packetSize);
 
+    // NPL header (organizer spec §5.1): offset 8 u8 type, offset 9 u32 peerAddress
+    // (= emulator unitId, 0…2147483647), offset 13 u16 requestId. The unit identity is the
+    // full u32 peerAddress; reading a single byte would merge vehicles that share a low byte.
     const type = this.buffer.readUInt8(8);
-    const unitId = this.buffer.readUInt8(9);
-    const peerAddress = this.buffer.readUInt32LE(10);
+    const peerAddress = this.buffer.readUInt32LE(9);
+    const unitId = peerAddress;
 
     const payload = this.buffer.subarray(
       NPL_HEADER_SIZE,

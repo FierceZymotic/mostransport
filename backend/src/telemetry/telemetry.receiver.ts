@@ -7,6 +7,7 @@ import {
 import { Server, Socket, createServer } from 'node:net';
 import { normalizeTelemetryTimestamp } from '../prediction/prediction.service.js';
 import { NdtpPacketExtractor } from './ndtp/ndtp.packet-extractor.js';
+import { isRealtimeNavPayload } from './ndtp/ndtp.realtime.js';
 import { TelemetryParser } from './telemetry.parser.js';
 import { TelemetryHistory } from './telemetry-history.js';
 import { TelemetryRepository } from './telemetry.repository.js';
@@ -62,9 +63,11 @@ export class TelemetryReceiver implements OnModuleInit, OnModuleDestroy {
           `NDTP packet extracted: ${packet.raw.length} bytes`,
         );
 
-        if (packet.payload.length < 28) {
+        // Only NAVDATA/REALTIME packets whose first cell is G6CellNav00 carry a position.
+        // The handshake payload is exactly 28 bytes, so a length check alone lets it through.
+        if (!isRealtimeNavPayload(packet.payload)) {
           this.logger.debug(
-            `Skipping non-telemetry packet: payload=${packet.payload.length} bytes`,
+            `Skipping non-telemetry packet (not NAVDATA/REALTIME with Nav00): payload=${packet.payload.length} bytes`,
           );
           continue;
         }
