@@ -1,10 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import {
-  DEFAULT_DEMO_PREDICTION_TIME,
-  normalizePredictionTime,
-  normalizeTelemetryTimestamp,
-} from '../src/prediction/prediction.service.js';
+import { DemoClock } from '../src/common/demo-clock.js';
+import { InvalidPredictionTimeError, requirePredictionTime } from '../src/prediction/prediction.service.js';
 import {
   resolveTargetActionFromRows,
   type TargetScheduleAction,
@@ -37,15 +34,23 @@ describe('schedule mismatch guard', () => {
     expect(action).toBeNull();
   });
 
-  it('normalizes live runtime timestamps to the frozen demo contract', () => {
-    const normalized = normalizePredictionTime(new Date('2026-09-27T09:42:44.000Z'));
-
-    expect(normalized.toISOString()).toBe(DEFAULT_DEMO_PREDICTION_TIME.toISOString());
+  // The previous two tests asserted that live times are replaced by the fixed demo instant
+  // 2026-01-06T03:35:00Z. Upstream (e1accf9) already changed telemetry to a replace-date
+  // mapping, so the telemetry test failed at the base; both mappings destroy intervals
+  // (every packet on one instant, or a 24 h jump at midnight) and were removed. The tests
+  // below assert the replacement contract: explicit times are kept, and live time is only
+  // shifted by one session-level constant offset that preserves packet intervals.
+  it('keeps an explicit live prediction time instead of substituting a fixed demo instant', () => {
+    const live = new Date('2026-09-27T09:42:44.000Z');
+    expect(requirePredictionTime(live).toISOString()).toBe(live.toISOString());
+    expect(() => requirePredictionTime(new Date('not a date'))).toThrow(InvalidPredictionTimeError);
   });
 
-  it('normalizes live telemetry timestamps to the frozen demo contract', () => {
-    const normalized = normalizeTelemetryTimestamp(1790503305);
-
-    expect(normalized).toBe(Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000));
+  it('translates live telemetry by a constant offset that preserves packet intervals', () => {
+    const clock = new DemoClock('day_shift', {}, new Date('2026-09-27T09:00:00Z'));
+    const live = [1790503305, 1790503318, 1790503318, 1790503333];
+    const adapted = live.map((t) => clock.toModelEpochSeconds(t));
+    expect(new Set(adapted).size).toBe(3); // not collapsed (only the genuine duplicate stays equal)
+    expect(adapted.slice(1).map((t, i) => t - adapted[i])).toEqual(live.slice(1).map((t, i) => t - live[i]));
   });
 });

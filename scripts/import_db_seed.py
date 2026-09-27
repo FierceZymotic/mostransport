@@ -10,6 +10,14 @@ ROOT = Path(__file__).resolve().parents[1]
 DB_URL = "postgresql://postgres:postgres@localhost:5432/mostransport"
 
 
+def as_utc(series: pd.Series) -> pd.Series:
+    """Organizer timestamps are naive UTC wall-clock. Bind them as aware UTC so that
+    TIMESTAMPTZ columns do not depend on the database session TimeZone. TIMESTAMPTZ keeps
+    microseconds: the truncation below is the one the driver applied implicitly before."""
+    aware = series.dt.tz_localize("UTC") if series.dt.tz is None else series.dt.tz_convert("UTC")
+    return aware.dt.floor("us")
+
+
 def ensure_schema(conn: psycopg.Connection) -> None:
     schema_sql = (ROOT / "database" / "mtr_DB_v2.sql").read_text(encoding="utf-8")
     with conn.cursor() as cur:
@@ -36,6 +44,7 @@ def parse_manual_fill(value):
 def import_telemetry(conn: psycopg.Connection) -> int:
     csv_path = ROOT / "database" / "telemetry_seed.csv"
     df = pd.read_csv(csv_path, parse_dates=["timestamp"])
+    df["timestamp"] = as_utc(df["timestamp"])
     inserted = 0
     with conn.cursor() as cur:
         for row in df.to_dict(orient="records"):
@@ -50,7 +59,7 @@ def import_telemetry(conn: psycopg.Connection) -> int:
                 (
                     str(row["unit_id"]),
                     None,
-                    row["timestamp"],
+                    row["timestamp"].to_pydatetime(),
                     float(row["longitude"]),
                     float(row["latitude"]),
                     bool(row["location_valid"]),
@@ -71,6 +80,7 @@ def import_telemetry(conn: psycopg.Connection) -> int:
 def import_schedule_actions(conn: psycopg.Connection) -> int:
     csv_path = ROOT / "database" / "schedule_actions_import_fixed.csv"
     df = pd.read_csv(csv_path, parse_dates=["time_begin"])
+    df["time_begin"] = as_utc(df["time_begin"])
     inserted = 0
     with conn.cursor() as cur:
         for row in df.to_dict(orient="records"):
@@ -85,7 +95,7 @@ def import_schedule_actions(conn: psycopg.Connection) -> int:
                 (
                     str(row["tt_action_item_id"]),
                     str(row["tr_id"]),
-                    row["time_begin"],
+                    row["time_begin"].to_pydatetime(),
                     None,
                     geom_wkt,
                     parse_manual_fill(row.get("manual_fill")),

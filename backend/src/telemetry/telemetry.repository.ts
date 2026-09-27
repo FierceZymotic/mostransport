@@ -1,5 +1,4 @@
 import { Injectable } from '@nestjs/common';
-import { normalizeTelemetryTimestamp } from '../prediction/prediction.service.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { VehicleState } from './vehicle-state.js';
 
@@ -73,8 +72,6 @@ export class TelemetryRepository {
     unitId: number,
     predictionTime: Date,
   ): Promise<VehicleState[]> {
-    const from = new Date(predictionTime.getTime() - 15 * 60 * 1000);
-
     const rows = await this.prisma.telemetry.findMany({
       where: {
         unit_id: String(unitId),
@@ -82,38 +79,66 @@ export class TelemetryRepository {
           lte: predictionTime,
         },
       },
-      orderBy: {
-        timestamp: 'asc',
-      },
+      // (timestamp, id): id is the insertion (arrival) order, a deterministic tie-break.
+      orderBy: [{ timestamp: 'asc' }, { id: 'asc' }],
     });
 
-    const recentRows = rows.filter((row) => row.timestamp >= from);
-    const lastPacket = rows.at(-1);
-    const lastValidGps = [...rows].reverse().find(
-      (row) => row.location_valid && row.longitude != null && row.latitude != null,
-    );
-
-    const deduped = new Map<number, (typeof rows)[number]>();
-
-    for (const row of [...recentRows, ...(lastPacket ? [lastPacket] : []), ...(lastValidGps ? [lastValidGps] : [])]) {
-      deduped.set(row.timestamp.getTime(), row);
-    }
-
-    return [...deduped.values()]
-      .sort((a, b) => a.timestamp.getTime() - b.timestamp.getTime())
-      .map((row) => ({
-        unitId: Number(row.unit_id),
-        timestamp: Math.floor(row.timestamp.getTime() / 1000),
-        longitude: row.longitude,
-        latitude: row.latitude,
-        locationValid: row.location_valid,
-        speed: row.speed ?? 0,
-        speedMax: row.speed_max ?? 0,
-        course: row.course ?? 0,
-        track: row.track ?? 0,
-        altitude: row.altitude ?? 0,
-        nsat: row.nsat ?? 0,
-        pdop: row.pdop ?? 0,
-      }));
+    return selectContractHistory(rows, predictionTime).map((row) => ({
+      unitId: Number(row.unit_id),
+      timestamp: Math.floor(row.timestamp.getTime() / 1000),
+      longitude: row.longitude,
+      latitude: row.latitude,
+      locationValid: row.location_valid,
+      speed: row.speed ?? 0,
+      speedMax: row.speed_max ?? 0,
+      course: row.course ?? 0,
+      track: row.track ?? 0,
+      altitude: row.altitude ?? 0,
+      nsat: row.nsat ?? 0,
+      pdop: row.pdop ?? 0,
+    }));
   }
+}
+
+export interface HistoryRow {
+  id: bigint | number;
+  timestamp: Date;
+  location_valid: boolean;
+  longitude: number | null;
+  latitude: number | null;
+}
+
+const FIFTEEN_MINUTES_MS = 15 * 60 * 1000;
+
+function compareRows(a: HistoryRow, b: HistoryRow): number {
+  const dt = a.timestamp.getTime() - b.timestamp.getTime();
+  if (dt !== 0) {
+    return dt;
+  }
+  return a.id < b.id ? -1 : a.id > b.id ? 1 : 0;
+}
+
+/**
+ * Contract v1 request history (BACKEND_ML_INTEGRATION §7): every packet with
+ * event_time in (T-15m, T], plus the last packet <= T and the last strict-valid GPS
+ * packet <= T. Packets after T never enter. Distinct packets that share a timestamp are
+ * all kept (deduplication is by row identity, not by timestamp). Order is (timestamp, id).
+ */
+export function selectContractHistory<R extends HistoryRow>(rows: R[], predictionTime: Date): R[] {
+  const cutoff = predictionTime.getTime();
+  const windowStart = cutoff - FIFTEEN_MINUTES_MS;
+  const past = rows.filter((row) => row.timestamp.getTime() <= cutoff).sort(compareRows);
+  if (past.length === 0) {
+    return [];
+  }
+  const keep = new Set<R>(past.filter((row) => row.timestamp.getTime() > windowStart));
+  keep.add(past[past.length - 1]);
+  for (let i = past.length - 1; i >= 0; i--) {
+    const row = past[i];
+    if (row.location_valid && Number.isFinite(row.longitude) && Number.isFinite(row.latitude)) {
+      keep.add(row);
+      break;
+    }
+  }
+  return past.filter((row) => keep.has(row));
 }

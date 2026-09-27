@@ -1,4 +1,5 @@
-import { Injectable } from '@nestjs/common';
+import { BadRequestException, Injectable } from '@nestjs/common';
+import { demoClock } from '../common/demo-clock.js';
 import { PrismaService } from '../prisma/prisma.service.js';
 import { TelemetryRepository } from '../telemetry/telemetry.repository.js';
 import { MlClientService } from './ml/ml.client.service.js';
@@ -9,62 +10,18 @@ import {
 import { ScheduleRepository } from './schedule.repository.js';
 import { TripMatcherService } from './trip-matcher.service.js';
 
-export const DEFAULT_DEMO_PREDICTION_TIME = new Date('2026-01-06T03:35:00.000Z');
+export class InvalidPredictionTimeError extends BadRequestException {}
 
-export function normalizeTimestampToFrozenContract(
-  value: Date | number,
-): number {
-  const timestamp = value instanceof Date ? value.getTime() : Number(value);
-
-  if (!Number.isFinite(timestamp)) {
-    return Math.floor(DEFAULT_DEMO_PREDICTION_TIME.getTime() / 1000);
-  }
-
-  const candidate = new Date(timestamp);
-
-  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
-  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
-
-  // Исторические данные 6 января оставляем как есть.
-  if (candidate >= frozenStart && candidate < frozenEnd) {
-    return Math.floor(candidate.getTime() / 1000);
-  }
-
-  // Live/demo: переносим текущую дату на 6 января,
-  // сохраняя время суток.
-  const demoTime = new Date(
-    Date.UTC(
-      2026,
-      0,
-      6,
-      candidate.getUTCHours(),
-      candidate.getUTCMinutes(),
-      candidate.getUTCSeconds(),
-      candidate.getUTCMilliseconds(),
-    ),
-  );
-
-  return Math.floor(demoTime.getTime() / 1000);
-}
-
-export function normalizePredictionTime(input: Date): Date {
+/**
+ * Validates an explicit model-time prediction instant T. T is never substituted: the
+ * Backend clock (common/demo-clock.ts) is the only place where live time is mapped.
+ */
+export function requirePredictionTime(input: Date): Date {
   const value = new Date(input);
-
   if (Number.isNaN(value.getTime())) {
-    return new Date(DEFAULT_DEMO_PREDICTION_TIME);
+    throw new InvalidPredictionTimeError('prediction time must be a valid ISO-8601 timestamp');
   }
-
-  const frozenStart = new Date('2026-01-06T00:00:00.000Z');
-  const frozenEnd = new Date('2026-01-07T00:00:00.000Z');
-  if (value >= frozenStart && value < frozenEnd) {
-    return value;
-  }
-
-  return new Date(DEFAULT_DEMO_PREDICTION_TIME);
-}
-
-export function normalizeTelemetryTimestamp(input: number | Date): number {
-  return normalizeTimestampToFrozenContract(input);
+  return value;
 }
 
 @Injectable()
@@ -80,9 +37,10 @@ export class PredictionService {
   async predictForVehicle(
     unitId: number,
   ): Promise<PredictionResponse> {
+    // "Now" in model time: the same session clock that stamps ingested telemetry.
     return this.predictForVehicleAt(
       unitId,
-      DEFAULT_DEMO_PREDICTION_TIME,
+      demoClock.now(),
     );
   }
 
@@ -90,7 +48,7 @@ export class PredictionService {
     unitId: number,
     predictionTime: Date,
   ): Promise<PredictionResponse> {
-    const normalizedPredictionTime = normalizePredictionTime(predictionTime);
+    const normalizedPredictionTime = requirePredictionTime(predictionTime);
 
     const vehicleHistory =
       await this.telemetryRepository.findHistory(
